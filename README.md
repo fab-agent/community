@@ -155,6 +155,8 @@ Why this is safer than handing out keys: a leaked invite is useless once redeeme
 
 ## Security notes
 
+Messages are not end-to-end encrypted yet; see the [E2EE design note](docs/e2ee-design.md).
+
 * Herdr plugins run as your user without a sandbox. Read the code before installing — it is small on purpose.
 * Your key is stored in the plugin config directory with mode `0600`. Never commit it.
 * Incoming messages are untrusted input. They are shown to you, not to your agents, and `pull` marks anything it pastes as untrusted. Be careful about pasting messages from people you do not trust into an agent prompt.
