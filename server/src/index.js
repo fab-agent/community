@@ -27,7 +27,9 @@ const pub = (m) => ({
   id: m.id, role: m.role || "member", name: m.name, department: m.department, title: m.title, task: m.task,
   last_seen: m.last_seen, online: Date.now() - m.last_seen < 90_000,
 });
-const clip = (v, n) => String(v ?? "").slice(0, n);
+// Strip control characters (incl. ESC, so no terminal escape sequences reach other members' screens).
+const clip = (v, n) => String(v ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").slice(0, n);
+const clipLine = (v, n) => clip(v, n).replace(/[\n\t]+/g, " ");
 
 // Retention is set per deployment: MESSAGE_RETENTION_DAYS (0 or unset = keep forever).
 const DAY = 86_400_000;
@@ -43,11 +45,11 @@ const purge = async (env, now = Date.now()) => {
 // Apply a profile edit (name/title/department) to a member row. Returns an error Response or null.
 async function editProfile(env, member, b) {
   const f = {};
-  if (b.title !== undefined) f.title = clip(b.title, 60);
-  if (b.department !== undefined) f.department = clip(b.department, 60);
-  if (b.task !== undefined) f.task = clip(b.task, 200);
+  if (b.title !== undefined) f.title = clipLine(b.title, 60);
+  if (b.department !== undefined) f.department = clipLine(b.department, 60);
+  if (b.task !== undefined) f.task = clipLine(b.task, 200);
   if (b.name !== undefined) {
-    const name = clip(b.name, 40).trim();
+    const name = clipLine(b.name, 40).trim();
     if (!name) return err(400, "name required");
     if (name !== member.name) {
       if (await env.DB.prepare("SELECT 1 FROM members WHERE name=? AND revoked=0 AND id!=?").bind(name, member.id).first())
@@ -79,7 +81,7 @@ export default {
     // ---- join: redeem a single-use invite (no auth; the code is the credential) ----
     if (path === "/v1/join" && req.method === "POST") {
       const b = await req.json().catch(() => ({}));
-      const code = clip(b.code, 64).trim();
+      const code = clipLine(b.code, 64).trim();
       if (!code) return err(400, "code required");
       const ch = await sha256(code);
       // Atomically consume the invite; a second redeem (or an expired code) matches nothing.
@@ -115,16 +117,17 @@ export default {
 
       if (path === "/v1/admin/invites" && req.method === "POST") {
         const b = await req.json().catch(() => ({}));
-        const name = clip(b.name, 40).trim();
+        const name = clipLine(b.name, 40).trim();
         if (!name) return err(400, "name required");
         if (await env.DB.prepare("SELECT 1 FROM members WHERE name=? AND revoked=0").bind(name).first()) return err(409, "name already exists");
         const hours = Math.min(Math.max(Number(b.ttl_hours) || 1, 1), 24 * 14);
         const role = b.role === "admin" ? "admin" : "member";
+        if (role === "admin" && actor) return err(403, "only the root ADMIN_KEY can invite admins");
         const code = randomCode();
         const expires_at = now + hours * 3_600_000;
         await env.DB.prepare(
           "INSERT INTO invites (code_hash,name,department,title,role,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?)"
-        ).bind(await sha256(code), name, clip(b.department, 60), clip(b.title, 60), role, by, now, expires_at).run();
+        ).bind(await sha256(code), name, clipLine(b.department, 60), clipLine(b.title, 60), role, by, now, expires_at).run();
         return json({ code, name, role, expires_at }, 201);
       }
       if (path === "/v1/admin/invites" && req.method === "GET") {
@@ -141,14 +144,14 @@ export default {
       if (path === "/v1/admin/members" && req.method === "POST") {
         if (actor) return err(403, "direct member creation needs the root ADMIN_KEY; use invites");
         const b = await req.json().catch(() => ({}));
-        const name = clip(b.name, 40).trim();
+        const name = clipLine(b.name, 40).trim();
         if (!name) return err(400, "name required");
         const key = randomKey();
         const id = crypto.randomUUID();
         try {
           await env.DB.prepare(
             "INSERT INTO members (id,name,department,title,task,role,key_hash,created_at) VALUES (?,?,?,?,?,?,?,?)"
-          ).bind(id, name, clip(b.department, 60), clip(b.title, 60), clip(b.task, 200), b.role === "admin" ? "admin" : "member", await sha256(key), now).run();
+          ).bind(id, name, clipLine(b.department, 60), clipLine(b.title, 60), clipLine(b.task, 200), b.role === "admin" ? "admin" : "member", await sha256(key), now).run();
         } catch (e) { return err(409, "name already exists"); }
         return json({ id, name, key }, 201);
       }
@@ -189,8 +192,11 @@ export default {
     if (!k) return err(401, "key required");
     const me = await env.DB.prepare("SELECT * FROM members WHERE key_hash=? AND revoked=0").bind(await sha256(k)).first();
     if (!me) return err(401, "invalid key");
-    await env.DB.prepare("UPDATE members SET last_seen=? WHERE id=?").bind(now, me.id).run();
-    me.last_seen = now;
+    // Throttled: polling every few seconds must not become a D1 write per request.
+    if (now - me.last_seen > 30_000) {
+      await env.DB.prepare("UPDATE members SET last_seen=? WHERE id=?").bind(now, me.id).run();
+      me.last_seen = now;
+    }
 
     if (path === "/v1/me" && req.method === "GET") return json(pub(me));
     if (path === "/v1/me" && req.method === "PATCH") {

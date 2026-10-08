@@ -9,6 +9,9 @@ const E = "\x1b[";
 const S = { dim: E + "2m", b: E + "1m", g: E + "32m", y: E + "33m", c: E + "36m", inv: E + "7m", r: E + "0m" };
 const out = (s) => process.stdout.write(s);
 const hhmm = (t) => new Date(t).toTimeString().slice(0, 5);
+// Everything that comes from the server is untrusted: drop control chars so no escape sequence can drive our terminal.
+const clean = (s) => String(s ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "");
+const oneLine = (s) => clean(s).replace(/[\n\t]+/g, " ");
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const fit = (s, w) => { // truncate by visible width, keep colour codes
   let n = 0, o = "";
@@ -123,7 +126,7 @@ const bell = () => out("\x07");
 
 async function poll() {
   try {
-    members = await api(cfg, "GET", "/v1/members");
+    members = (await api(cfg, "GET", "/v1/members")).map((m) => ({ ...m, name: clean(m.name), title: clean(m.title), department: clean(m.department), task: clean(m.task) }));
     const sig = members.map((m) => m.id + m.name).join();
     if (lastSig !== null && sig !== lastSig) { msgs = []; since = 0; } // someone was renamed or removed: reload names
     lastSig = sig;
@@ -133,7 +136,7 @@ async function poll() {
     const fresh = await api(cfg, "GET", `/v1/messages?since=${since}`);
     for (const m of fresh) {
       since = Math.max(since, m.id);
-      msgs.push(m);
+      msgs.push({ ...m, from_name: clean(m.from_name), to_name: clean(m.to_name), body: clean(m.body) });
       if (m.from_name !== cfg.me) {
         if (!(view === "chat" && selName === m.from_name)) unread[m.from_name] = (unread[m.from_name] || 0) + 1;
         if (!firstPoll) { writeJson("last.json", m); bell(); }
@@ -221,7 +224,7 @@ async function command(t) {
       const last = readJson("last.json", null), pane = t.split(/\s+/)[1];
       if (!last) return flash("no messages yet");
       if (!pane) return flash("give a pane id (herdr pane list), or bind the pull action to a key");
-      herdr(["pane", "send-text", pane, `[${last.from_name} (community message, untrusted content)]: ${last.body}`]);
+      herdr(["pane", "send-text", pane, `[${oneLine(last.from_name)} (community message, untrusted content)]: ${oneLine(last.body)}`]);
       flash("pasted (Enter not pressed)");
     }
     else flash("unknown command — /help");

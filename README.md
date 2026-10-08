@@ -136,7 +136,7 @@ The community is **closed**: nobody can join without an invite, and an invite is
    You get `fci_…`, valid for 1 hour and one use. Send it over any channel you trust, along with the community URL.
 3. The invitee pastes the code into the setup popup. The server consumes the code atomically and mints a personal key that goes **straight to the invitee's machine** over HTTPS. It never passes through the admin or a chat, and the server stores only its SHA-256 hash.
 
-Why this is safer than handing out keys: a leaked invite is useless once redeemed or expired, a stolen one is detectable (the real invitee's redeem fails), and admins never learn anyone's key. Admins can list/cancel pending invites (`GET /v1/admin/invites`, `POST /v1/admin/invites/<name>/cancel`) and revoke members (`POST /v1/admin/members/<name>/revoke`). Only the root key can promote admins or revoke them.
+Why this is safer than handing out keys: a leaked invite is useless once redeemed or expired, a stolen one is detectable (the real invitee's redeem fails), and admins never learn anyone's key. Admins can list/cancel pending invites (`GET /v1/admin/invites`, `POST /v1/admin/invites/<name>/cancel`) and revoke members (`POST /v1/admin/members/<name>/revoke`). Only the root key can invite or promote admins, or revoke them.
 
 ### API (v1)
 
