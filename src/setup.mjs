@@ -19,7 +19,7 @@ try {
   }
   const info = await fetch(url.replace(/\/$/, "") + "/v1/community").then((r) => r.json());
   const me = await api({ url, key }, "GET", "/v1/me");
-  saveConfig({ url, key, community: info.name, me: me.name });
+  saveConfig({ url, key, community: info.name, me: me.name, id: me.id });
   console.log(`\n  ✓ ${info.name} — ${me.name} connected as.\n`);
   try { execFileSync(process.env.HERDR_BIN_PATH || "herdr", ["plugin", "action", "invoke", "community.open"]); } catch {}
 } catch (e) {

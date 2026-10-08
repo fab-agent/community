@@ -1,6 +1,6 @@
 // Community TUI: scrollable member list on top, command/message input at the bottom.
 // Mouse: wheel scrolls, left click selects, right click opens a context menu.
-import { loadConfig, api, readJson, writeJson, herdr } from "./lib.mjs";
+import { loadConfig, saveConfig, api, readJson, writeJson, herdr } from "./lib.mjs";
 
 const cfg = loadConfig();
 if (!cfg) { console.log("Run setup first: Community: open"); process.exit(1); }
@@ -124,6 +124,11 @@ const bell = () => out("\x07");
 async function poll() {
   try {
     members = await api(cfg, "GET", "/v1/members");
+    const sig = members.map((m) => m.id + m.name).join();
+    if (lastSig !== null && sig !== lastSig) { msgs = []; since = 0; } // someone was renamed or removed: reload names
+    lastSig = sig;
+    const meNow = members.find((m) => m.id === cfg.id);
+    if (meNow && meNow.name !== cfg.me) { cfg.me = meNow.name; saveConfig(cfg); }
     if (!selName && members.length) selName = (members.find((m) => m.name !== cfg.me) || members[0]).name;
     const fresh = await api(cfg, "GET", `/v1/messages?since=${since}`);
     for (const m of fresh) {
@@ -139,7 +144,7 @@ async function poll() {
   } catch (e) { status = "connection: " + e.message; }
   draw();
 }
-let firstPoll = true;
+let firstPoll = true, lastSig = null;
 
 function openChat(name) { selName = name; view = "chat"; cscroll = 0; unread[name] = 0; draw(); }
 function move(d) {
@@ -152,6 +157,8 @@ function openMenu(x, y, target) {
   const items = [];
   if (target) {
     items.push({ label: `Message ${target.name}`, run: () => openChat(target.name) });
+    if (isAdmin() || target.name === cfg.me)
+      items.push({ label: `Rename ${target.name}…`, run: () => { input = target.name === cfg.me ? "/rename " : `/rename ${target.name} | `; draw(); } });
     if (isAdmin() && target.name !== cfg.me)
       items.push({ label: `Remove ${target.name}…`, run: () => confirmRemove(target.name) });
   }
@@ -169,13 +176,28 @@ function confirmRemove(name) {
   draw();
 }
 
-const help = "/who /to <name> [msg] /task <text> /invite <name> | <dept> | <title> [| admin] /remove <name> /pull <pane> /quit";
+const help = "/who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /pull <pane> /quit";
 async function command(t) {
   try {
     if (t === "/help") flash(help, 10000);
     else if (t === "/quit") quit();
     else if (t === "/who") { view = "list"; draw(); }
     else if (t.startsWith("/task ")) { await api(cfg, "PATCH", "/v1/me", { task: t.slice(6) }); await poll(); flash("task updated"); }
+    else if (/^\/(rename|title|dept)\b/.test(t)) {
+      const field = { rename: "name", title: "title", dept: "department" }[t.slice(1).split(/\s/)[0]];
+      const rest = t.replace(/^\/\w+\s*/, "");
+      let target = null, value = rest;
+      if (rest.includes("|")) { const [who, ...v] = rest.split("|"); target = who.trim(); value = v.join("|").trim(); }
+      if (!value && field === "name") return flash("usage: /rename <new name>  (admins: /rename <old> | <new>)");
+      if (target && target !== cfg.me) {
+        await api(cfg, "POST", `/v1/admin/members/${encodeURIComponent(target)}/profile`, { [field]: value });
+        if (selName === target && field === "name") selName = value;
+      } else {
+        await api(cfg, "PATCH", "/v1/me", { [field]: value });
+        if (field === "name") { if (selName === cfg.me) selName = value; cfg.me = value; saveConfig(cfg); }
+      }
+      msgs = []; since = 0; await poll(); flash("updated");
+    }
     else if (t.startsWith("/to ")) {
       const rest = t.slice(4).trim();
       const m = [...members].sort((a, b) => b.name.length - a.name.length).find((x) => rest.toLowerCase().startsWith(x.name.toLowerCase()));
@@ -276,6 +298,7 @@ process.stdin.on("data", async (d) => {
 process.stdout.on("resize", draw);
 process.on("exit", () => out(E + "?1000l" + E + "?1006l"));
 
+if (!cfg.id) { try { const me = await api(cfg, "GET", "/v1/me"); cfg.id = me.id; cfg.me = me.name; saveConfig(cfg); } catch {} }
 out(E + "?1049h" + E + "?1000h" + E + "?1006h");
 await poll();
 setInterval(poll, 3000);

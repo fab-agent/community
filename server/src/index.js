@@ -40,6 +40,30 @@ const purge = async (env, now = Date.now()) => {
   return r.meta.changes ?? 0;
 };
 
+// Apply a profile edit (name/title/department) to a member row. Returns an error Response or null.
+async function editProfile(env, member, b) {
+  const f = {};
+  if (b.title !== undefined) f.title = clip(b.title, 60);
+  if (b.department !== undefined) f.department = clip(b.department, 60);
+  if (b.task !== undefined) f.task = clip(b.task, 200);
+  if (b.name !== undefined) {
+    const name = clip(b.name, 40).trim();
+    if (!name) return err(400, "name required");
+    if (name !== member.name) {
+      if (await env.DB.prepare("SELECT 1 FROM members WHERE name=? AND revoked=0 AND id!=?").bind(name, member.id).first())
+        return err(409, "name already exists");
+      // a removed member keeps history under a tagged name and frees this one
+      await env.DB.prepare("UPDATE members SET name=name||' ['||substr(id,1,6)||']' WHERE name=? AND revoked=1").bind(name).run();
+      f.name = name;
+    }
+  }
+  const keys = Object.keys(f);
+  if (!keys.length) return null;
+  await env.DB.prepare(`UPDATE members SET ${keys.map((k) => k + "=?").join(",")} WHERE id=?`).bind(...keys.map((k) => f[k]), member.id).run();
+  Object.assign(member, f);
+  return null;
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
@@ -140,6 +164,14 @@ export default {
         const x = await env.DB.prepare("UPDATE members SET role=? WHERE id=? OR name=?").bind(r, role[1], decodeURIComponent(role[1])).run();
         return json({ updated: x.meta.changes, role: r });
       }
+      const prof = path.match(/^\/v1\/admin\/members\/([^/]+)\/profile$/);
+      if (prof && req.method === "POST") {
+        const target = await env.DB.prepare("SELECT * FROM members WHERE (id=? OR name=?) AND revoked=0").bind(prof[1], decodeURIComponent(prof[1])).first();
+        if (!target) return err(404, "not found");
+        const b = await req.json().catch(() => ({}));
+        const e = await editProfile(env, target, b);
+        return e || json(pub(target));
+      }
       const rev = path.match(/^\/v1\/admin\/members\/([^/]+)\/revoke$/);
       if (rev && req.method === "POST") {
         const target = await env.DB.prepare("SELECT * FROM members WHERE id=? OR name=?").bind(rev[1], decodeURIComponent(rev[1])).first();
@@ -163,13 +195,8 @@ export default {
     if (path === "/v1/me" && req.method === "GET") return json(pub(me));
     if (path === "/v1/me" && req.method === "PATCH") {
       const b = await req.json().catch(() => ({}));
-      const f = {
-        task: b.task !== undefined ? clip(b.task, 200) : me.task,
-        title: b.title !== undefined ? clip(b.title, 60) : me.title,
-        department: b.department !== undefined ? clip(b.department, 60) : me.department,
-      };
-      await env.DB.prepare("UPDATE members SET task=?,title=?,department=? WHERE id=?").bind(f.task, f.title, f.department, me.id).run();
-      return json(pub({ ...me, ...f }));
+      const e = await editProfile(env, me, b);
+      return e || json(pub(me));
     }
     if (path === "/v1/members" && req.method === "GET") {
       const { results } = await env.DB.prepare("SELECT * FROM members WHERE revoked=0 ORDER BY department,name").all();
