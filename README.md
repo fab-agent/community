@@ -43,9 +43,10 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `Enter` (empty line) or double-click | Open the conversation with the highlighted person |
 | `Esc` | Back to the list |
 | *plain text + Enter* | Send to the highlighted person |
-| **Right-click** a person | Context menu: Message, Remove (admins, with confirmation), Invite, Refresh |
+| **Right-click** a person | Context menu: Message, Rename, Remove (admins, with confirmation), Invite, Refresh |
 | `/to <name> [message]` | Jump to a person, optionally sending right away |
 | `/task <text>` | Update what you are working on |
+| `/rename <new name>`, `/title <text>`, `/dept <text>` | Edit your own profile. Admins can edit others: `/rename <old> \| <new>` (same for `/title`, `/dept`) |
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
 | `/pull <pane-id>` | Paste the last received message into another pane (Enter is **not** pressed) |
@@ -139,13 +140,13 @@ Why this is safer than handing out keys: a leaked invite is useless once redeeme
 | Method & path | Auth | Purpose |
 | --- | --- | --- |
 | `GET /v1/community` | – | Community name |
-| `GET /v1/me`, `PATCH /v1/me` | member | Your profile; update `task`, `title`, `department` |
+| `GET /v1/me`, `PATCH /v1/me` | member | Your profile; update `name`, `task`, `title`, `department` |
 | `GET /v1/members` | member | All active members with online flag |
 | `POST /v1/messages` | member | `{ "to": "<name or id>", "body": "…" }` |
 | `GET /v1/messages?since=<id>&peer=<name>` | member | Messages you sent or received |
 | `POST /v1/join` | invite code | Redeem an invite, receive a personal key (once) |
 | `POST/GET /v1/admin/invites`, `POST …/invites/<name>/cancel` | admin | Create, list, cancel invites |
-| `GET /v1/admin/members`, `POST …/members/<name>/revoke` | admin | List / revoke members |
+| `GET /v1/admin/members`, `POST …/members/<name>/revoke`, `POST …/members/<name>/profile` | admin | List, revoke, edit others' name/title/department |
 | `POST /v1/admin/members`, `POST …/members/<name>/role` | root | Bootstrap members, change roles |
 | `POST /v1/admin/purge` | admin | Apply the retention policy now |
 
