@@ -1,0 +1,13 @@
+{
+  "name": "community",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Community for Herdr: plugin and reference server",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "check": "node --check src/chat.mjs && node --check src/lib.mjs && node --check src/open.mjs && node --check src/pull.mjs && node --check src/setup.mjs && node --check server/src/index.js"
+  }
+}

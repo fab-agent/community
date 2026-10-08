@@ -152,6 +152,7 @@ export default {
         if (!name) return err(400, "name required");
         const key = randomKey();
         const id = crypto.randomUUID();
+        await env.DB.prepare("UPDATE members SET name=name||' ['||substr(id,1,6)||']' WHERE name=? AND revoked=1").bind(name).run();
         try {
           await env.DB.prepare(
             "INSERT INTO members (id,name,department,title,task,role,key_hash,created_at) VALUES (?,?,?,?,?,?,?,?)"

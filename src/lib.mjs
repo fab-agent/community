@@ -43,3 +43,8 @@ export function herdr(args) {
 }
 export const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(path.join(stateDir(), f), "utf8")); } catch { return d; } };
 export const writeJson = (f, v) => fs.writeFileSync(path.join(stateDir(), f), JSON.stringify(v));
+
+// Everything that comes from the server is untrusted: drop control characters (incl. ESC and bidi overrides)
+// so no escape sequence can drive our terminal or press Enter in a pane we paste into.
+export const clean = (s) => String(s ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "");
+export const oneLine = (s) => String(s ?? "").replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]+/g, " ");

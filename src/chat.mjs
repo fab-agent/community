@@ -1,6 +1,6 @@
 // Community TUI: scrollable member list on top, command/message input at the bottom.
 // Mouse: wheel scrolls, left click selects, right click opens a context menu.
-import { loadConfig, saveConfig, api, readJson, writeJson, herdr } from "./lib.mjs";
+import { loadConfig, saveConfig, api, readJson, writeJson, herdr, clean, oneLine } from "./lib.mjs";
 
 const cfg = loadConfig();
 if (!cfg) { console.log("Run setup first: Community: open"); process.exit(1); }
@@ -9,9 +9,6 @@ const E = "\x1b[";
 const S = { dim: E + "2m", b: E + "1m", g: E + "32m", y: E + "33m", c: E + "36m", inv: E + "7m", r: E + "0m" };
 const out = (s) => process.stdout.write(s);
 const hhmm = (t) => new Date(t).toTimeString().slice(0, 5);
-// Everything that comes from the server is untrusted: drop control chars so no escape sequence can drive our terminal.
-const clean = (s) => String(s ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "");
-const oneLine = (s) => clean(s).replace(/[\n\t]+/g, " ");
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const fit = (s, w) => { // truncate by visible width, keep colour codes
   let n = 0, o = "";
