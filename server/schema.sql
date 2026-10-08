@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS members (
   title TEXT NOT NULL DEFAULT '',
   task TEXT NOT NULL DEFAULT '',
   key_hash TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL DEFAULT 'member',
   revoked INTEGER NOT NULL DEFAULT 0,
   last_seen INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
@@ -18,3 +19,14 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_msg_to ON messages(to_id, id);
 CREATE INDEX IF NOT EXISTS idx_msg_from ON messages(from_id, id);
+CREATE TABLE IF NOT EXISTS invites (
+  code_hash TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  department TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'member',
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER
+);

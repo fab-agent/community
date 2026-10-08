@@ -8,6 +8,10 @@ const sha256 = async (s) => {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 };
+const randomCode = () => {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return "fci_" + [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+};
 const randomKey = () => {
   const b = crypto.getRandomValues(new Uint8Array(24));
   return "fck_" + [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -20,7 +24,7 @@ const safeEq = (a, b) => {
 };
 const bearer = (req) => (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
 const pub = (m) => ({
-  id: m.id, name: m.name, department: m.department, title: m.title, task: m.task,
+  id: m.id, role: m.role || "member", name: m.name, department: m.department, title: m.title, task: m.task,
   last_seen: m.last_seen, online: Date.now() - m.last_seen < 90_000,
 });
 const clip = (v, n) => String(v ?? "").slice(0, n);
@@ -48,10 +52,68 @@ export default {
         message_retention_days: retentionDays(env) || null,
       });
 
-    // ---- admin ----
+    // ---- join: redeem a single-use invite (no auth; the code is the credential) ----
+    if (path === "/v1/join" && req.method === "POST") {
+      const b = await req.json().catch(() => ({}));
+      const code = clip(b.code, 64).trim();
+      if (!code) return err(400, "code required");
+      const ch = await sha256(code);
+      // Atomically consume the invite; a second redeem (or an expired code) matches nothing.
+      const used = await env.DB.prepare(
+        "UPDATE invites SET used_at=? WHERE code_hash=? AND used_at IS NULL AND expires_at>?"
+      ).bind(now, ch, now).run();
+      if (!used.meta.changes) return err(410, "invite is invalid, used or expired");
+      const inv = await env.DB.prepare("SELECT * FROM invites WHERE code_hash=?").bind(ch).first();
+      const key = randomKey();
+      const id = crypto.randomUUID();
+      try {
+        await env.DB.prepare(
+          "INSERT INTO members (id,name,department,title,role,key_hash,created_at) VALUES (?,?,?,?,?,?,?)"
+        ).bind(id, inv.name, inv.department, inv.title, inv.role, await sha256(key), now).run();
+      } catch {
+        await env.DB.prepare("UPDATE invites SET used_at=NULL WHERE code_hash=?").bind(ch).run();
+        return err(409, "name already exists");
+      }
+      return json({ id, name: inv.name, role: inv.role, key }, 201);
+    }
+
+    // ---- admin: ADMIN_KEY (bootstrap) or a member whose role is "admin" ----
     if (path.startsWith("/v1/admin/")) {
-      if (!env.ADMIN_KEY || !safeEq(bearer(req), env.ADMIN_KEY)) return err(401, "admin key required");
+      const k = bearer(req);
+      let actor = null; // null = root
+      if (!(env.ADMIN_KEY && k && safeEq(k, env.ADMIN_KEY))) {
+        actor = k && await env.DB.prepare("SELECT * FROM members WHERE key_hash=? AND revoked=0 AND role='admin'").bind(await sha256(k)).first();
+        if (!actor) return err(401, "admin required");
+      }
+      const by = actor ? actor.id : "root";
+
+      if (path === "/v1/admin/invites" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const name = clip(b.name, 40).trim();
+        if (!name) return err(400, "name required");
+        if (await env.DB.prepare("SELECT 1 FROM members WHERE name=?").bind(name).first()) return err(409, "name already exists");
+        const hours = Math.min(Math.max(Number(b.ttl_hours) || 48, 1), 24 * 14);
+        const role = b.role === "admin" ? "admin" : "member";
+        const code = randomCode();
+        const expires_at = now + hours * 3_600_000;
+        await env.DB.prepare(
+          "INSERT INTO invites (code_hash,name,department,title,role,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?)"
+        ).bind(await sha256(code), name, clip(b.department, 60), clip(b.title, 60), role, by, now, expires_at).run();
+        return json({ code, name, role, expires_at }, 201);
+      }
+      if (path === "/v1/admin/invites" && req.method === "GET") {
+        const { results } = await env.DB.prepare(
+          "SELECT name,department,title,role,created_at,expires_at,used_at FROM invites ORDER BY created_at DESC LIMIT 100"
+        ).all();
+        return json(results);
+      }
+      const inv = path.match(/^\/v1\/admin\/invites\/([^/]+)\/cancel$/);
+      if (inv && req.method === "POST") {
+        const r = await env.DB.prepare("DELETE FROM invites WHERE name=? AND used_at IS NULL").bind(decodeURIComponent(inv[1])).run();
+        return json({ cancelled: r.meta.changes });
+      }
       if (path === "/v1/admin/members" && req.method === "POST") {
+        if (actor) return err(403, "direct member creation needs the root ADMIN_KEY; use invites");
         const b = await req.json().catch(() => ({}));
         const name = clip(b.name, 40).trim();
         if (!name) return err(400, "name required");
@@ -59,8 +121,8 @@ export default {
         const id = crypto.randomUUID();
         try {
           await env.DB.prepare(
-            "INSERT INTO members (id,name,department,title,task,key_hash,created_at) VALUES (?,?,?,?,?,?,?)"
-          ).bind(id, name, clip(b.department, 60), clip(b.title, 60), clip(b.task, 200), await sha256(key), now).run();
+            "INSERT INTO members (id,name,department,title,task,role,key_hash,created_at) VALUES (?,?,?,?,?,?,?,?)"
+          ).bind(id, name, clip(b.department, 60), clip(b.title, 60), clip(b.task, 200), b.role === "admin" ? "admin" : "member", await sha256(key), now).run();
         } catch (e) { return err(409, "name already exists"); }
         return json({ id, name, key }, 201);
       }
@@ -68,12 +130,23 @@ export default {
         const { results } = await env.DB.prepare("SELECT * FROM members ORDER BY name").all();
         return json(results.map((m) => ({ ...pub(m), revoked: !!m.revoked })));
       }
-      if (path === "/v1/admin/purge" && req.method === "POST") return json({ deleted: await purge(env, now) });
+      const role = path.match(/^\/v1\/admin\/members\/([^/]+)\/role$/);
+      if (role && req.method === "POST") {
+        if (actor) return err(403, "only the root ADMIN_KEY can change roles");
+        const b = await req.json().catch(() => ({}));
+        const r = b.role === "admin" ? "admin" : "member";
+        const x = await env.DB.prepare("UPDATE members SET role=? WHERE id=? OR name=?").bind(r, role[1], decodeURIComponent(role[1])).run();
+        return json({ updated: x.meta.changes, role: r });
+      }
       const rev = path.match(/^\/v1\/admin\/members\/([^/]+)\/revoke$/);
       if (rev && req.method === "POST") {
-        await env.DB.prepare("UPDATE members SET revoked=1 WHERE id=? OR name=?").bind(rev[1], decodeURIComponent(rev[1])).run();
+        const target = await env.DB.prepare("SELECT * FROM members WHERE id=? OR name=?").bind(rev[1], decodeURIComponent(rev[1])).first();
+        if (!target) return err(404, "not found");
+        if (actor && (target.role === "admin" || target.id === actor.id)) return err(403, "admins can only be revoked with the root ADMIN_KEY");
+        await env.DB.prepare("UPDATE members SET revoked=1 WHERE id=?").bind(target.id).run();
         return json({ ok: true });
       }
+      if (path === "/v1/admin/purge" && req.method === "POST") return json({ deleted: await purge(env, now) });
       return err(404, "not found");
     }
 

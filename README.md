@@ -29,7 +29,7 @@ Then open the command palette action **Community: open** (or run `herdr plugin a
 On first run a small popup asks for:
 
 1. **Community URL** — e.g. `https://community.example.com`
-2. **Your key** — a personal key given to you by your community admin (`fck_…`)
+2. **Your invite code** — a one-time code (`fci_…`) from your community admin. The plugin redeems it and stores a personal key on your machine; you never see or share that key
 
 After that, a new workspace named `▣ <community name>` appears in the sidebar and opens the chat tab.
 
@@ -40,6 +40,7 @@ After that, a new workspace named `▣ <community name>` appears in the sidebar 
 | `/who` | List members by department, with role, task and online status |
 | `/to <name> [message]` | Switch to a person, optionally sending a message right away |
 | *plain text* | Send to the currently selected person |
+| `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
 | `/task <text>` | Update what you are working on |
 | `/pull <pane-id>` | Paste the last received message into another pane (Enter is **not** pressed) |
 | `/help`, `/quit` | Help / leave |
@@ -106,15 +107,24 @@ How retention is enforced:
 
 Want a different policy (per-department windows, legal hold, export before delete)? The whole server is one file — fork it and change `purge()`.
 
-Add a member (the response contains the personal key — it is shown once):
+### Admins and invites
 
-```sh
-curl -X POST https://<your-worker>/v1/admin/members \
-  -H "Authorization: Bearer $ADMIN_KEY" -H 'content-type: application/json' \
-  -d '{"name":"Ayşe","department":"Sales","title":"Account Executive"}'
-```
+The community is **closed**: nobody can join without an invite, and an invite is a *one-time, expiring* code, not a key.
 
-Revoke: `POST /v1/admin/members/<id-or-name>/revoke`.
+1. The `ADMIN_KEY` secret is the root credential, used only to bootstrap. Create yourself and promote yourself to admin:
+   ```sh
+   curl -X POST $URL/v1/admin/members -H "Authorization: Bearer $ADMIN_KEY" \
+     -H 'content-type: application/json' -d '{"name":"Ada","department":"Management","title":"Founder","role":"admin"}'
+   ```
+   The response contains your personal key (shown once) — enter it in the plugin setup popup.
+2. From then on, admins invite people from inside Herdr:
+   ```
+   /invite Ayşe | Sales | Account Executive
+   ```
+   You get `fci_…`, valid for 48 hours and one use. Send it over any channel you trust, along with the community URL.
+3. The invitee pastes the code into the setup popup. The server consumes the code atomically and mints a personal key that goes **straight to the invitee's machine** over HTTPS. It never passes through the admin or a chat, and the server stores only its SHA-256 hash.
+
+Why this is safer than handing out keys: a leaked invite is useless once redeemed or expired, a stolen one is detectable (the real invitee's redeem fails), and admins never learn anyone's key. Admins can list/cancel pending invites (`GET /v1/admin/invites`, `POST /v1/admin/invites/<name>/cancel`) and revoke members (`POST /v1/admin/members/<name>/revoke`). Only the root key can promote admins or revoke them.
 
 ### API (v1)
 
@@ -125,7 +135,10 @@ Revoke: `POST /v1/admin/members/<id-or-name>/revoke`.
 | `GET /v1/members` | member | All active members with online flag |
 | `POST /v1/messages` | member | `{ "to": "<name or id>", "body": "…" }` |
 | `GET /v1/messages?since=<id>&peer=<name>` | member | Messages you sent or received |
-| `POST/GET /v1/admin/members`, `POST …/revoke` | admin | Manage members |
+| `POST /v1/join` | invite code | Redeem an invite, receive a personal key (once) |
+| `POST/GET /v1/admin/invites`, `POST …/invites/<name>/cancel` | admin | Create, list, cancel invites |
+| `GET /v1/admin/members`, `POST …/members/<name>/revoke` | admin | List / revoke members |
+| `POST /v1/admin/members`, `POST …/members/<name>/role` | root | Bootstrap members, change roles |
 | `POST /v1/admin/purge` | admin | Apply the retention policy now |
 
 ## Security notes
