@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS members (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  department TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  task TEXT NOT NULL DEFAULT '',
+  key_hash TEXT NOT NULL UNIQUE,
+  revoked INTEGER NOT NULL DEFAULT 0,
+  last_seen INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_msg_to ON messages(to_id, id);
+CREATE INDEX IF NOT EXISTS idx_msg_from ON messages(from_id, id);

@@ -1,0 +1,10 @@
+{
+  "name": "fab-community",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "d1_databases": [
+    { "binding": "DB", "database_name": "fab-community", "database_id": "<your-d1-database-id>" }
+  ]
+}
