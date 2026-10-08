@@ -35,16 +35,23 @@ After that, a new workspace named `▣ <community name>` appears in the sidebar 
 
 ## Using it
 
-| Command | What it does |
+The community tab is a small full-screen TUI: a scrollable member list on top (grouped by department, with role, task and online status), and a message/command line at the bottom.
+
+| Input | What it does |
 | --- | --- |
-| `/who` | List members by department, with role, task and online status |
-| `/to <name> [message]` | Switch to a person, optionally sending a message right away |
-| *plain text* | Send to the currently selected person |
+| `↑` `↓`, mouse wheel, `PgUp` `PgDn` | Move / scroll |
+| `Enter` (empty line) or double-click | Open the conversation with the highlighted person |
+| `Esc` | Back to the list |
+| *plain text + Enter* | Send to the highlighted person |
+| **Right-click** a person | Context menu: Message, Remove (admins, with confirmation), Invite, Refresh |
+| `/to <name> [message]` | Jump to a person, optionally sending right away |
+| `/task <text>` | Update what you are working on |
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
-| `/task <text>` | Update what you are working on |
 | `/pull <pane-id>` | Paste the last received message into another pane (Enter is **not** pressed) |
-| `/help`, `/quit` | Help / leave |
+| `/help`, `/quit` | Help / leave (reopen with `community.open`) |
+
+Unread messages show as a yellow `(n)` badge next to the sender and ring the terminal bell.
 
 ### Bring a message to your agent
 
