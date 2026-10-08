@@ -1,5 +1,7 @@
 # Community for Herdr
 
+[![CI](https://github.com/fab-agent/community/actions/workflows/ci.yml/badge.svg)](https://github.com/fab-agent/community/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > Put your teammates next to your agents. A tiny community layer for [Herdr](https://herdr.dev): see who is around, what they are working on, and talk to them without leaving your terminal.
 
 Herdr's sidebar shows your workspaces and the agents inside them. **Community** adds one more workspace — marked with `▣` — that connects you to the people you work with: members grouped by department, their role and current task, who is online, and direct messages.
@@ -22,7 +24,8 @@ Messages are **never** sent to an agent automatically. They land in the communit
 Requires Herdr ≥ 0.9.0 and Node.js ≥ 18 (no npm dependencies).
 
 ```sh
-herdr plugin install fab-agent/community
+herdr plugin install fab-agent/community            # latest main
+herdr plugin install fab-agent/community --ref v0.1.0   # pinned release
 ```
 
 Then open the command palette action **Community: open** (or run `herdr plugin action invoke community.open`).
