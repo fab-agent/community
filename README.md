@@ -41,6 +41,7 @@ After that, a new workspace named `▣ <community name>` appears in the sidebar 
 | `/to <name> [message]` | Switch to a person, optionally sending a message right away |
 | *plain text* | Send to the currently selected person |
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
+| `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
 | `/task <text>` | Update what you are working on |
 | `/pull <pane-id>` | Paste the last received message into another pane (Enter is **not** pressed) |
 | `/help`, `/quit` | Help / leave |

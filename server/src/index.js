@@ -66,6 +66,8 @@ export default {
       const inv = await env.DB.prepare("SELECT * FROM invites WHERE code_hash=?").bind(ch).first();
       const key = randomKey();
       const id = crypto.randomUUID();
+      // A removed member keeps their message history but frees the name for re-invites.
+      await env.DB.prepare("UPDATE members SET name=name||' ['||substr(id,1,6)||']' WHERE name=? AND revoked=1").bind(inv.name).run();
       try {
         await env.DB.prepare(
           "INSERT INTO members (id,name,department,title,role,key_hash,created_at) VALUES (?,?,?,?,?,?,?)"
@@ -91,7 +93,7 @@ export default {
         const b = await req.json().catch(() => ({}));
         const name = clip(b.name, 40).trim();
         if (!name) return err(400, "name required");
-        if (await env.DB.prepare("SELECT 1 FROM members WHERE name=?").bind(name).first()) return err(409, "name already exists");
+        if (await env.DB.prepare("SELECT 1 FROM members WHERE name=? AND revoked=0").bind(name).first()) return err(409, "name already exists");
         const hours = Math.min(Math.max(Number(b.ttl_hours) || 1, 1), 24 * 14);
         const role = b.role === "admin" ? "admin" : "member";
         const code = randomCode();

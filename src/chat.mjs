@@ -47,6 +47,7 @@ const help = `${C.b}Commands${C.r}
   /task <text>        update your task
   /pull [pane]         paste the last message into a pane (Enter is not pressed)
   /invite <name> | <department> | <title> [| admin]   (admins) one-time invite code, valid 1h
+  /remove <name>       (admins) remove a member; their access is revoked immediately
   /help  /quit         plain text goes to the selected person`;
 
 rl.on("line", async (line) => {
@@ -60,6 +61,12 @@ rl.on("line", async (line) => {
       const [name, department = "", title = "", role] = t.slice(8).split("|").map((x) => x.trim());
       const r = await api(cfg, "POST", "/v1/admin/invites", { name, department, title, role });
       say(`${C.g}Invite for ${r.name}${C.r} (single use, expires ${new Date(r.expires_at).toLocaleString()}):\n  ${C.b}${r.code}${C.r}\n  Send it over a trusted channel together with: ${cfg.url}`);
+    }
+    else if (t.startsWith("/remove ")) {
+      const name = t.slice(8).trim();
+      await api(cfg, "POST", `/v1/admin/members/${encodeURIComponent(name)}/revoke`);
+      if (peer === name) peer = null;
+      say(`${C.g}${name} removed${C.r}`); await poll(false);
     }
     else if (t.startsWith("/task ")) { await api(cfg, "PATCH", "/v1/me", { task: t.slice(6) }); say(`${C.dim}task updated${C.r}`); }
     else if (t.startsWith("/to ")) {
