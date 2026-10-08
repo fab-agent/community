@@ -123,6 +123,10 @@ export default {
         const hours = Math.min(Math.max(Number(b.ttl_hours) || 1, 1), 24 * 14);
         const role = b.role === "admin" ? "admin" : "member";
         if (role === "admin" && actor) return err(403, "only the root ADMIN_KEY can invite admins");
+        // At most one invite per minute per admin: limits invite spam and brute-force name probing.
+        const last = await env.DB.prepare("SELECT MAX(created_at) AS t FROM invites WHERE created_by=?").bind(by).first();
+        if (last?.t && now - last.t < 60_000)
+          return json({ error: "wait before creating another invite", retry_after: Math.ceil((60_000 - (now - last.t)) / 1000) }, 429);
         const code = randomCode();
         const expires_at = now + hours * 3_600_000;
         await env.DB.prepare(
