@@ -3,6 +3,14 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
+  "vars": {
+    // Shown as the workspace label in Herdr.
+    "COMMUNITY_NAME": "my-community",
+    // Delete messages older than this many days. 0 = keep forever.
+    "MESSAGE_RETENTION_DAYS": "30"
+  },
+  // Daily purge at 03:15 UTC.
+  "triggers": { "crons": ["15 3 * * *"] },
   "preview_urls": false,
   "d1_databases": [
     { "binding": "DB", "database_name": "fab-community", "database_id": "<your-d1-database-id>" }

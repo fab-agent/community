@@ -77,7 +77,7 @@ Herdr (your machine)                    Community server
 
 ## Run your own community server
 
-You need a Cloudflare account (free tier is enough).
+Community is decentralised by design: **every organisation hosts its own server and sets its own rules.** The reference server in [`server/`](server) is a single Cloudflare Worker plus a D1 database (the free tier is enough for small teams). Nobody else sees your members or messages.
 
 ```sh
 cd server
@@ -88,7 +88,23 @@ openssl rand -hex 24 | sed 's/^/fca_/' | npx wrangler secret put ADMIN_KEY
 npx wrangler deploy
 ```
 
-Optionally set `COMMUNITY_NAME` under `vars` in `wrangler.jsonc`; it becomes the workspace label.
+### Configuration and retention
+
+Everything is configured in `server/wrangler.jsonc`:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `COMMUNITY_NAME` | `community` | Shown as the workspace label (`▣ <name>`) in Herdr |
+| `MESSAGE_RETENTION_DAYS` | `30` in the example | Messages older than this are deleted. `0` keeps them forever |
+
+How retention is enforced:
+
+* A **daily cron trigger** (`"triggers": { "crons": ["15 3 * * *"] }`) deletes expired messages from D1.
+* Reads also ignore anything past the window, so an expired message is never served, even before the next purge.
+* `POST /v1/admin/purge` (admin key) runs the purge immediately — handy after shortening the window.
+* `GET /v1/community` publishes the active window (`message_retention_days`), so members know how long their messages live.
+
+Want a different policy (per-department windows, legal hold, export before delete)? The whole server is one file — fork it and change `purge()`.
 
 Add a member (the response contains the personal key — it is shown once):
 
@@ -110,13 +126,14 @@ Revoke: `POST /v1/admin/members/<id-or-name>/revoke`.
 | `POST /v1/messages` | member | `{ "to": "<name or id>", "body": "…" }` |
 | `GET /v1/messages?since=<id>&peer=<name>` | member | Messages you sent or received |
 | `POST/GET /v1/admin/members`, `POST …/revoke` | admin | Manage members |
+| `POST /v1/admin/purge` | admin | Apply the retention policy now |
 
 ## Security notes
 
 * Herdr plugins run as your user without a sandbox. Read the code before installing — it is small on purpose.
 * Your key is stored in the plugin config directory with mode `0600`. Never commit it.
 * Incoming messages are untrusted input. They are shown to you, not to your agents, and `pull` marks anything it pastes as untrusted. Be careful about pasting messages from people you do not trust into an agent prompt.
-* The server stores message bodies in plain text in your D1 database. Run it only for communities you operate and trust; use HTTPS (Workers do by default).
+* The server stores message bodies in plain text in your D1 database until your retention window expires. Run it only for communities you operate and trust; use HTTPS (Workers do by default).
 
 ## Roadmap
 
