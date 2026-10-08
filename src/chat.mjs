@@ -99,8 +99,8 @@ function draw() {
   for (const r of rows) line(fit(r, W));
 
   const hint = view === "list"
-    ? "↑↓ select · Enter open · right-click menu · type to message · /help"
-    : "type to reply · wheel/PgUp scroll · Esc back · right-click menu";
+    ? "↑↓ select · Enter open · Tab menu · type to message · /help"
+    : "type to reply · wheel/PgUp scroll · Esc back · Tab menu";
   line(S.dim + "─".repeat(W) + S.r);
   line(fit(status ? S.y + status + S.r : S.dim + hint + S.r, W));
   const prompt = `${S.dim}${cfg.me} →${S.r} ${selName ? S.c + selName : S.dim + "nobody"}${S.r} › `;
@@ -110,7 +110,7 @@ function draw() {
     const wmax = Math.max(...menu.items.map((i) => i.label.length)) + 2;
     const x = Math.max(1, Math.min(menu.x, W - wmax)), y = Math.max(2, Math.min(menu.y, H - menu.items.length - 1));
     menu.box = { x, y, w: wmax };
-    menu.items.forEach((it, i) => { buf += E + `${y + i};${x}H` + S.inv + (" " + it.label).padEnd(wmax) + S.r; });
+    menu.items.forEach((it, i) => { buf += E + `${y + i};${x}H` + (i === menu.sel ? S.b + E + "7m" : E + "47;30m") + (" " + it.label).padEnd(wmax) + S.r; });
   }
   const col = strip(prompt).length + input.length + 1;
   buf += E + `${H};${Math.min(col, W)}H` + E + "?25h";
@@ -164,7 +164,7 @@ function openMenu(x, y, target) {
   }
   if (isAdmin()) items.push({ label: "Invite someone…", run: () => { input = "/invite Name | Department | Title"; draw(); } });
   items.push({ label: "Refresh", run: () => poll() });
-  menu = { x, y, items };
+  menu = { x, y, items, sel: Math.min(1, items.length - 1) < 0 ? 0 : 0 };
   draw();
 }
 function confirmRemove(name) {
@@ -172,7 +172,7 @@ function confirmRemove(name) {
     { label: `Really remove ${name}?`, run: () => {} },
     { label: "Yes, remove", run: async () => { await command(`/remove ${name}`); } },
     { label: "Cancel", run: () => {} },
-  ] };
+  ], sel: 2 };
   draw();
 }
 
@@ -239,7 +239,20 @@ function quit() {
   process.exit(0);
 }
 async function onKey(k) {
-  if (menu && k !== "mouse") { if (k === "esc") { menu = null; draw(); } return; }
+  if (k === "tab") { // keyboard way to the context menu
+    if (menu) { menu = null; return draw(); }
+    const target = members.find((m) => m.name === selName);
+    const rows = listRows(), idx = rows.findIndex((r) => r.m && r.m.name === selName);
+    const H = process.stdout.rows || 24;
+    return openMenu(4, view === "list" && idx >= 0 ? 2 + (idx - top) + 1 : 3, target);
+  }
+  if (menu) {
+    if (k === "esc") menu = null;
+    else if (k === "up") menu.sel = (menu.sel + menu.items.length - 1) % menu.items.length;
+    else if (k === "down") menu.sel = (menu.sel + 1) % menu.items.length;
+    else if (k === "enter") { const it = menu.items[menu.sel]; menu = null; draw(); await it.run(); return; }
+    return draw();
+  }
   if (k === "up") { if (view === "list") move(-1); else cscroll++; }
   else if (k === "down") { if (view === "list") move(1); else cscroll = Math.max(0, cscroll - 1); }
   else if (k === "pgup") { if (view === "list") top -= 5; else cscroll += 5; }
@@ -278,7 +291,7 @@ let lastClick = 0;
 process.stdin.setRawMode(true);
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", async (d) => {
-  const re = /\x1b\[<(\d+);(\d+);(\d+)([Mm])|\x1b\[A|\x1b\[B|\x1b\[5~|\x1b\[6~|\x1b\[[0-9;?]*[A-Za-z~]|\x1b|\r|\n|\x7f|\x03|\x04|[^\x00-\x1f\x7f\x1b]+/g;
+  const re = /\x1b\[<(\d+);(\d+);(\d+)([Mm])|\x1b\[A|\x1b\[B|\x1b\[5~|\x1b\[6~|\x1b\[[0-9;?]*[A-Za-z~]|\x1b|\t|\r|\n|\x7f|\x03|\x04|[^\x00-\x1f\x7f\x1b]+/g;
   let m;
   while ((m = re.exec(d))) {
     const s = m[0];
@@ -288,6 +301,7 @@ process.stdin.on("data", async (d) => {
     else if (s === "\x1b[5~") await onKey("pgup");
     else if (s === "\x1b[6~") await onKey("pgdn");
     else if (s === "\x1b") await onKey("esc");
+    else if (s === "\t") await onKey("tab");
     else if (s === "\r" || s === "\n") await onKey("enter");
     else if (s === "\x7f") await onKey("bs");
     else if (s === "\x03" || s === "\x04") await onKey("quit");

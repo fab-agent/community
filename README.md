@@ -43,6 +43,7 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `Enter` (empty line) or double-click | Open the conversation with the highlighted person |
 | `Esc` | Back to the list |
 | *plain text + Enter* | Send to the highlighted person |
+| `Tab` | Open the context menu for the highlighted person (`↑↓` + `Enter`, `Esc` or `Tab` to close). No mouse needed |
 | **Right-click** a person | Context menu: Message, Rename, Remove (admins, with confirmation), Invite, Refresh |
 | `/to <name> [message]` | Jump to a person, optionally sending right away |
 | `/task <text>` | Update what you are working on |
@@ -51,6 +52,8 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
 | `/pull <pane-id>` | Paste the last received message into another pane (Enter is **not** pressed) |
 | `/help`, `/quit` | Help / leave (reopen with `community.open`) |
+
+Herdr does not bind `Tab`, so it always reaches the community pane. If right-click opens Herdr's own menu instead of ours, set `ui.right_click_passthrough_modifier = "alt"` in Herdr's config and use Alt+right-click.
 
 Unread messages show as a yellow `(n)` badge next to the sender and ring the terminal bell.
 
