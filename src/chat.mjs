@@ -8,7 +8,7 @@ const hhmm = (t) => new Date(t).toTimeString().slice(0, 5);
 let peer = null, since = readJson("since.json", 0), members = [];
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const prompt = () => { rl.setPrompt(`${peer ? C.c + peer : C.dim + "nobody"}${C.r} › `); rl.prompt(true); };
+const prompt = () => { rl.setPrompt(`${C.dim}${cfg.me} →${C.r} ${peer ? C.c + peer : C.dim + "nobody"}${C.r} › `); rl.prompt(true); };
 const say = (s) => { readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); console.log(s); prompt(); };
 
 function showMembers() {
