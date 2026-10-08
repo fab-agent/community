@@ -92,7 +92,7 @@ export default {
         const name = clip(b.name, 40).trim();
         if (!name) return err(400, "name required");
         if (await env.DB.prepare("SELECT 1 FROM members WHERE name=?").bind(name).first()) return err(409, "name already exists");
-        const hours = Math.min(Math.max(Number(b.ttl_hours) || 48, 1), 24 * 14);
+        const hours = Math.min(Math.max(Number(b.ttl_hours) || 1, 1), 24 * 14);
         const role = b.role === "admin" ? "admin" : "member";
         const code = randomCode();
         const expires_at = now + hours * 3_600_000;

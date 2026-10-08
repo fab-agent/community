@@ -46,7 +46,7 @@ const help = `${C.b}Commands${C.r}
   /to <name> [message]   switch to a person / send a message
   /task <text>        update your task
   /pull [pane]         paste the last message into a pane (Enter is not pressed)
-  /invite <name> | <department> | <title> [| admin]   (admins) one-time invite code, valid 48h
+  /invite <name> | <department> | <title> [| admin]   (admins) one-time invite code, valid 1h
   /help  /quit         plain text goes to the selected person`;
 
 rl.on("line", async (line) => {
