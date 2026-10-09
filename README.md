@@ -4,9 +4,9 @@
 
 > Put your teammates next to your agents. A tiny community layer for [Herdr](https://herdr.dev): see who is around, what they are working on, and talk to them without leaving your terminal.
 
-[![Watch the 45-second film](docs/promo-poster.jpg)](https://github.com/fab-agent/community/releases/download/v0.3.0/community-promo.mp4)
+[![Watch the 45-second film on YouTube](docs/promo-poster.jpg)](https://www.youtube.com/watch?v=rGXIWuEsS4o)
 
-<sub>▶ A 45-second film (MP4, 7 MB). Your terminal and your human team, in one runtime.</sub>
+<sub>▶ [Watch on YouTube](https://www.youtube.com/watch?v=rGXIWuEsS4o) (45 s) · [download the MP4](https://github.com/fab-agent/community/releases/download/v0.3.0/community-promo.mp4). Your terminal and your human team, in one runtime.</sub>
 
 Herdr's sidebar shows your workspaces and the agents inside them. **Community** adds one more workspace — marked with `▣` — that connects you to the people you work with: members grouped by department, their role and current task, who is online, and direct messages.
 
