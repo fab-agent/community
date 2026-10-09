@@ -25,7 +25,7 @@ const safeEq = (a, b) => {
 const bearer = (req) => (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
 const pub = (m) => ({
   id: m.id, role: m.role || "member", name: m.name, department: m.department, title: m.title, task: m.task,
-  pubkey: m.pubkey || null,
+  pubkey: m.pubkey || null, enc_pubkey: m.enc_pubkey || null, enc_sig: m.enc_sig || null,
   last_seen: m.last_seen, online: Date.now() - m.last_seen < 90_000,
 });
 // Strip control characters (incl. ESC, so no terminal escape sequences reach other members' screens).
@@ -48,8 +48,9 @@ async function verifySig(pubkey, msg, sig) {
 const validPubkey = (k) => typeof k === "string" && /^[A-Za-z0-9+/]{43}=$/.test(k);
 // Validate/store a message from `me`. target = {kind:"dm",to_id} | {kind:"topic",topic_id}.
 async function storeMessage(env, me, b, target, now) {
-  const body = clip(b.body, 4000).trim();
+  const body = clip(b.body, /^e2ee1/.test(String(b.body)) ? 16000 : 4000).trim();
   if (!body) return err(400, "body required");
+  if (target.kind === "topic" && target.private && !body.startsWith("e2ee1t:")) return err(400, "private topics accept encrypted messages only");
   const tgt = target.kind === "dm" ? `dm:${target.to_id}` : `topic:${target.topic_id}`;
   let ts = null, nonce = null, sig = null;
   if (me.pubkey) {
@@ -227,7 +228,7 @@ export default {
       }
       const rk = path.match(/^\/v1\/admin\/members\/([^/]+)\/reset-key$/);
       if (rk && req.method === "POST") { // lost device: forget the signing key so the member can register a new one
-        const x = await env.DB.prepare("UPDATE members SET pubkey=NULL WHERE id=? OR name=?").bind(rk[1], decodeURIComponent(rk[1])).run();
+        const x = await env.DB.prepare("UPDATE members SET pubkey=NULL, enc_pubkey=NULL, enc_sig=NULL WHERE id=? OR name=?").bind(rk[1], decodeURIComponent(rk[1])).run();
         return json({ updated: x.meta.changes });
       }
       const arc = path.match(/^\/v1\/admin\/topics\/(\d+)\/archive$/);
@@ -264,8 +265,16 @@ export default {
     if (path === "/v1/me/key" && req.method === "POST") { // register the device's signing key once
       const b = await req.json().catch(() => ({}));
       if (!validPubkey(b.pubkey)) return err(400, "pubkey must be a base64 raw Ed25519 public key");
-      if (me.pubkey) return err(409, "a key is already registered; ask an admin to reset it");
-      await env.DB.prepare("UPDATE members SET pubkey=? WHERE id=?").bind(b.pubkey, me.id).run();
+      if (me.pubkey && me.pubkey !== b.pubkey) return err(409, "a different key is already registered; ask an admin to reset it");
+      let enc = null, encSig = null;
+      if (b.enc_pubkey !== undefined) {
+        if (!validPubkey(b.enc_pubkey) || typeof b.enc_sig !== "string") return err(400, "enc_pubkey (X25519, base64) and enc_sig required");
+        // the signing key vouches for the encryption key, so the server cannot swap it unnoticed
+        if (!(await verifySig(b.pubkey, `community/v1 enc\n${me.id}\n${b.enc_pubkey}`, b.enc_sig))) return err(400, "bad enc_sig");
+        if (me.enc_pubkey && me.enc_pubkey !== b.enc_pubkey) return err(409, "a different encryption key is already registered; ask an admin to reset it");
+        enc = b.enc_pubkey; encSig = b.enc_sig;
+      }
+      await env.DB.prepare("UPDATE members SET pubkey=?, enc_pubkey=COALESCE(?,enc_pubkey), enc_sig=COALESCE(?,enc_sig) WHERE id=?").bind(b.pubkey, enc, encSig, me.id).run();
       return json({ ok: true });
     }
     if (path === "/v1/messages" && req.method === "POST") {
@@ -276,38 +285,81 @@ export default {
     }
     if (path === "/v1/topics" && req.method === "POST") {
       const b = await req.json().catch(() => ({}));
-      const title = clipLine(b.title, 80).trim();
+      const priv = b.private === true;
+      const title = priv ? clip(b.title, 600).trim() : clipLine(b.title, 80).trim();
       if (!title) return err(400, "title required");
       const last = await env.DB.prepare("SELECT MAX(created_at) AS t FROM topics WHERE created_by=?").bind(me.id).first();
       if (last?.t && now - last.t < 30_000) return json({ error: "wait before opening another topic", retry_after: Math.ceil((30_000 - (now - last.t)) / 1000) }, 429);
-      const r = await env.DB.prepare("INSERT INTO topics (title,created_by,created_at) VALUES (?,?,?)").bind(title, me.id, now).run();
-      return json({ id: r.meta.last_row_id, title }, 201);
+      if (!priv) {
+        const r = await env.DB.prepare("INSERT INTO topics (title,created_by,created_at) VALUES (?,?,?)").bind(title, me.id, now).run();
+        return json({ id: r.meta.last_row_id, title }, 201);
+      }
+      // Private: the client sends the title encrypted and the topic key wrapped for every member, signed by the creator.
+      const wraps = b.wraps && typeof b.wraps === "object" ? b.wraps : {};
+      const ids = Object.keys(wraps);
+      if (!title.startsWith("e2ee1t:")) return err(400, "private topic titles must be encrypted");
+      if (!me.pubkey) return err(400, "register a signing key first");
+      if (ids.length < 2 || ids.length > 50 || !ids.includes(me.id)) return err(400, "2-50 members including yourself required");
+      if (ids.some((id) => typeof wraps[id] !== "string" || wraps[id].length > 1000)) return err(400, "bad wrap");
+      for (const id of ids) {
+        const m = await env.DB.prepare("SELECT enc_pubkey FROM members WHERE id=? AND revoked=0").bind(id).first();
+        if (!m?.enc_pubkey) return err(400, "every member needs an active account with an encryption key");
+      }
+      const canon = `community/v1 topic\n${me.id}\n${title}\n` + (await Promise.all([...ids].sort().map(async (id) => `${id}:${await sha256(wraps[id])}`))).join("\n");
+      if (!b.bundle_sig || !(await verifySig(me.pubkey, canon, String(b.bundle_sig)))) return err(400, "bad bundle_sig");
+      const r = await env.DB.prepare("INSERT INTO topics (title,created_by,created_at,private,bundle_sig) VALUES (?,?,?,1,?)").bind(title, me.id, now, String(b.bundle_sig)).run();
+      const tid = r.meta.last_row_id;
+      for (const id of ids) await env.DB.prepare("INSERT INTO topic_members (topic_id,member_id,wrap) VALUES (?,?,?)").bind(tid, id, wraps[id]).run();
+      return json({ id: tid }, 201);
     }
     if (path === "/v1/topics" && req.method === "GET") {
       const { results } = await env.DB.prepare(
-        `SELECT t.id,t.title,t.archived,t.created_at,m.name AS created_by,
+        `SELECT t.id,t.title,t.archived,t.created_at,t.private,t.bundle_sig,t.created_by AS created_by_id,m.name AS created_by,
                 COALESCE((SELECT MAX(id) FROM messages WHERE topic_id=t.id),0) AS last_id,
                 (SELECT COUNT(*) FROM messages WHERE topic_id=t.id AND created_at>=?) AS messages
-         FROM topics t LEFT JOIN members m ON m.id=t.created_by ORDER BY last_id DESC, t.id DESC LIMIT 200`
-      ).bind(cutoff(env, now)).all();
-      return json(results.map((t) => ({ ...t, archived: !!t.archived })));
+         FROM topics t LEFT JOIN members m ON m.id=t.created_by
+         WHERE t.private=0 OR t.id IN (SELECT topic_id FROM topic_members WHERE member_id=?)
+         ORDER BY last_id DESC, t.id DESC LIMIT 200`
+      ).bind(cutoff(env, now), me.id).all();
+      const out = [];
+      for (const t of results) {
+        const o = { ...t, archived: !!t.archived, private: !!t.private };
+        if (!o.private) { delete o.bundle_sig; delete o.created_by_id; }
+        else {
+          const { results: mem } = await env.DB.prepare("SELECT member_id,wrap FROM topic_members WHERE topic_id=?").bind(t.id).all();
+          o.members = await Promise.all(mem.map(async (x) => ({ id: x.member_id, wrap_hash: await sha256(x.wrap) })));
+          o.my_wrap = mem.find((x) => x.member_id === me.id)?.wrap;
+        }
+        out.push(o);
+      }
+      return json(out);
     }
-    const tm = path.match(/^\/v1\/topics\/(\d+)\/messages$/);
-    if (tm && req.method === "POST") {
+    const tm = path.match(/^\/v1\/topics\/(\d+)\/(messages|archive)$/);
+    if (tm) {
       const topic = await env.DB.prepare("SELECT * FROM topics WHERE id=?").bind(Number(tm[1])).first();
+      // private topics do not exist for non-members
+      if (topic?.private && !(await env.DB.prepare("SELECT 1 FROM topic_members WHERE topic_id=? AND member_id=?").bind(topic.id, me.id).first())) return err(404, "topic not found");
       if (!topic) return err(404, "topic not found");
-      if (topic.archived) return err(409, "topic is archived");
-      const b = await req.json().catch(() => ({}));
-      return storeMessage(env, me, b, { kind: "topic", topic_id: topic.id }, now);
-    }
-    if (tm && req.method === "GET") {
-      const since = Number(url.searchParams.get("since") || 0);
-      const { results } = await env.DB.prepare(
-        `SELECT m.id,m.from_id,m.body,m.created_at,m.ts,m.nonce,m.sig,f.name AS from_name
-         FROM messages m JOIN members f ON f.id=m.from_id
-         WHERE m.topic_id=? AND m.id>? AND m.created_at>=? ORDER BY m.id LIMIT 200`
-      ).bind(Number(tm[1]), since, cutoff(env, now)).all();
-      return json(results);
+      if (tm[2] === "archive" && req.method === "POST") { // creator (admins use /v1/admin/topics/<id>/archive)
+        if (topic.created_by !== me.id) return err(403, "only the creator or an admin can archive");
+        const b = await req.json().catch(() => ({}));
+        await env.DB.prepare("UPDATE topics SET archived=? WHERE id=?").bind(b.archived === false ? 0 : 1, topic.id).run();
+        return json({ ok: true, archived: b.archived !== false });
+      }
+      if (tm[2] === "messages" && req.method === "POST") {
+        if (topic.archived) return err(409, "topic is archived");
+        const b = await req.json().catch(() => ({}));
+        return storeMessage(env, me, b, { kind: "topic", topic_id: topic.id, private: !!topic.private }, now);
+      }
+      if (tm[2] === "messages" && req.method === "GET") {
+        const since = Number(url.searchParams.get("since") || 0);
+        const { results } = await env.DB.prepare(
+          `SELECT m.id,m.from_id,m.body,m.created_at,m.ts,m.nonce,m.sig,f.name AS from_name
+           FROM messages m JOIN members f ON f.id=m.from_id
+           WHERE m.topic_id=? AND m.id>? AND m.created_at>=? ORDER BY m.id LIMIT 200`
+        ).bind(topic.id, since, cutoff(env, now)).all();
+        return json(results);
+      }
     }
     if (path === "/v1/messages" && req.method === "GET") {
       const since = Number(url.searchParams.get("since") || 0);

@@ -1,4 +1,4 @@
-// Update notice: once every 6 h ask GitHub for the latest release and compare with the installed version.
+// Update notice: once every 24 h ask GitHub for the latest release and compare with the installed version.
 // Opt out with "update_check": false in the plugin config. Only the public releases endpoint is contacted.
 import fs from "node:fs";
 import path from "node:path";
@@ -17,7 +17,7 @@ export function installedVersion(root) {
 export async function checkUpdate(current, store, fetchFn = fetch, now = Date.now()) {
   if (!current) return null;
   let c = store.read() || {};
-  if (!c.at || now - c.at > 6 * 3_600_000) {
+  if (!c.at || now - c.at > 24 * 3_600_000) {
     try {
       const r = await fetchFn(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { accept: "application/vnd.github+json", "user-agent": "herdr-community" } });
       if (r.ok) c = { at: now, latest: String((await r.json()).tag_name || "") };

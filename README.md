@@ -67,6 +67,17 @@ Besides direct messages there are **discussions**: open topics everyone in the c
 | `/archive`, `/archive undo` | **Admins only.** Archive (read-only) or restore the open discussion |
 | `/people`, `/topics` | Switch section |
 
+### End-to-end encryption and private topics
+
+Direct messages and **private topics** are end-to-end encrypted. The server only stores opaque envelopes (`e2ee1:…`), so neither the operator nor anyone with access to the database can read them.
+
+* **Direct messages**: a random key per message, wrapped separately for you and the recipient with X25519 (ephemeral key) + HKDF, content under AES-256-GCM. Your own copy is readable on your device.
+* **Private topics**: `/private <title> | name1, name2` creates a topic only those members can see or read. The creator generates a topic key, wraps it for each member and **signs the bundle**, so the server cannot swap in a key it knows. The title is encrypted too. Membership is fixed at creation; to include someone else, open a new topic. Removing a member from the community revokes their key, so they can no longer fetch anything from the server (what they already downloaded stays on their device).
+* **Encryption keys are vouched for by the signing key** (`enc_sig`), so a malicious server cannot substitute a recipient's key. Compare safety numbers (`/fp`) to catch a swapped signing key at first contact.
+* If someone has no verified encryption key yet (older plugin), messaging them is blocked instead of silently falling back to plain text. Public discussions stay readable by the community (they are the shared record) but are still signed.
+* **No recovery**: your private keys live only in `signing.json` on your device. Lose the device and old encrypted messages are gone; an admin resets your keys (`reset-key`) and you start fresh.
+* Still visible to the server: who talks to whom, when, message sizes, member names and the directory fields (department, title, task), and public discussions. `/pull` writes the decrypted text of the message you pull to `state/last.json` (mode 0700 directory) so the pull action works; delete it if that matters to you.
+
 ### Signed messages
 
 Every message is signed on the sender's device with an Ed25519 key that never leaves it, and checked again by the server and by every reader:
@@ -147,6 +158,7 @@ Fresh installs use `schema.sql`. If you deployed an earlier version, apply the m
 
 ```sh
 npx wrangler d1 execute community --remote --file=migrations/0003_topics_signatures.sql   # discussions + signatures
+npx wrangler d1 execute community --remote --file=migrations/0004_private_topics_e2ee.sql  # encryption keys + private topics
 npx wrangler deploy
 ```
 
@@ -196,10 +208,10 @@ Why this is safer than handing out keys: a leaked invite is useless once redeeme
 | `GET /v1/community` | – | Community name |
 | `GET /v1/me`, `PATCH /v1/me` | member | Your profile; update `name`, `task`, `title`, `department` |
 | `GET /v1/members` | member | All active members with online flag |
-| `POST /v1/me/key` | member | Register your device's Ed25519 public key (once; base64 raw) |
+| `POST /v1/me/key` | member | Register your Ed25519 signing key and X25519 encryption key (`pubkey`, `enc_pubkey`, `enc_sig`) |
 | `POST /v1/messages` | member | `{ "to": "<name or id>", "body", "ts", "nonce", "sig" }` (signature required once you have a key) |
 | `GET /v1/messages?since=<id>&peer=<name>` | member | Direct messages you sent or received |
-| `POST/GET /v1/topics`, `POST/GET /v1/topics/<id>/messages` | member | Discussions: open, list, post, read |
+| `POST/GET /v1/topics`, `POST/GET /v1/topics/<id>/messages`, `POST /v1/topics/<id>/archive` | member | Discussions: open (public or private), list, post, read, archive your own |
 | `POST /v1/admin/topics/<id>/archive`, `POST …/members/<name>/reset-key` | admin | Archive a discussion / forget a lost signing key |
 | `POST /v1/join` | invite code | Redeem an invite, receive a personal key (once) |
 | `POST/GET /v1/admin/invites`, `POST …/invites/<name>/cancel` | admin | Create, list, cancel invites |
@@ -209,9 +221,9 @@ Why this is safer than handing out keys: a leaked invite is useless once redeeme
 
 ## Security notes
 
-* Once every 6 hours the TUI asks `api.github.com` for the latest release of this repo to show an update notice. Disable it with `"update_check": false` in the plugin's `config.json`.
+* Once every 24 hours the TUI asks `api.github.com` for the latest release of this repo to show an update notice. Disable it with `"update_check": false` in the plugin's `config.json`.
 
-Messages are **signed** (authenticity and integrity, see above) but not yet **encrypted**: the server operator can read them. See the [E2EE design note](docs/e2ee-design.md).
+Direct messages and private topics are **end-to-end encrypted**, and all messages are **signed** (see above). Public discussions are signed but readable by the community and the server operator. Design background: [E2EE design note](docs/e2ee-design.md).
 
 * Herdr plugins run as your user without a sandbox. Read the code before installing — it is small on purpose.
 * Your key is stored in the plugin config directory with mode `0600`. Never commit it.
@@ -221,8 +233,8 @@ Messages are **signed** (authenticity and integrity, see above) but not yet **en
 ## Roadmap
 
 * Real-time delivery (WebSocket / Durable Object) instead of polling
-* Private (invite-only) discussions and department rooms
-* End-to-end encryption of message bodies (signing is already in)
+* Department rooms; adding members to an existing private topic
+* Multi-device support (one identity, several devices)
 * An admin CLI for member management
 * Colored workspace / sidebar section, once Herdr's plugin API supports it
 

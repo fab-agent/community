@@ -2,7 +2,8 @@
 // Mouse: wheel scrolls, left click selects, right click opens a context menu.
 import { loadConfig, saveConfig, api, readJson, writeJson, herdr, clean, oneLine, configDir } from "./lib.mjs";
 import { checkUpdate, installedVersion } from "./update.mjs";
-import { loadOrCreateSigner, signMessage, verdict, fingerprint, dmTarget, topicTarget } from "./sign.mjs";
+import { loadOrCreateSigner, signMessage, verdict, fingerprint, dmTarget, topicTarget, checkPin, signEncKey, verifyEncKey, signBytes, verifyBytes, canonBody } from "./sign.mjs";
+import { sealDM, openDM, newTopicKey, wrapKey, unwrapKey, sealTopicText, openTopicText, bundleCanonical, bundleCanonicalH, sha256hex, DM_PREFIX, TOPIC_PREFIX } from "./e2ee.mjs";
 
 const cfg = loadConfig();
 if (!cfg) { console.log("Run setup first: Community: open"); process.exit(1); }
@@ -35,6 +36,7 @@ let topics = [], tmsgs = {}, tsince = {}, selTopic = null, tunread = {};
 let view = "list";            // "list" | "chat" (chat = one person or one topic, by section)
 const signer = loadOrCreateSigner(configDir());
 const pins = readJson("pins.json", {});
+const tkeys = {};             // private topic id -> topic key (Buffer), only after the creator's signature checked out
 let updateNote = "";
 if (cfg.update_check !== false) {
   checkUpdate(installedVersion(new URL("..", import.meta.url).pathname), { read: () => readJson("update.json", null), write: (o) => writeJson("update.json", o) })
@@ -67,13 +69,36 @@ function memberLine(m, selected, w) {
   const f = fit(line, w);
   return selected ? S.inv + strip(f).padEnd(w).slice(0, w) + S.r : f;
 }
+// A member's encryption key is usable only if their pinned signing key vouched for it.
+function encKeyOf(m) {
+  if (!m?.pubkey || !m.enc_pubkey || !m.enc_sig) return null;
+  if (checkPin(pins, m.id, m.pubkey) === "changed") return null;
+  return verifyEncKey(pins[m.id], m.id, m.enc_pubkey, m.enc_sig) ? m.enc_pubkey : null;
+}
+const LOCKED = "🔒 (cannot decrypt — sent before you had a key, or not for you)";
+function decorateDM(m) {
+  const raw = clean(m.body), out = { ...m, from_name: clean(m.from_name), to_name: clean(m.to_name), raw };
+  if (raw.startsWith(DM_PREFIX)) {
+    const plain = openDM(raw, cfg.id, signer.encPriv, m.from_id, dmTarget(m.to_id));
+    out.enc = true; out.body = plain == null ? LOCKED : clean(plain);
+  } else out.body = raw;
+  return out;
+}
+function decorateTopicMsg(m, tid) {
+  const raw = clean(m.body), out = { ...m, from_name: clean(m.from_name), raw };
+  if (raw.startsWith(TOPIC_PREFIX)) {
+    const plain = tkeys[tid] ? openTopicText(tkeys[tid], raw, `topic:${tid}\n${m.from_id}`) : null;
+    out.enc = true; out.body = plain == null ? LOCKED : clean(plain);
+  } else out.body = raw;
+  return out;
+}
 const MARKS = { ok: S.g + "✓", unsigned: S.dim + "·", changed: E + "31m⚠ key changed", bad: E + "31m✗ forged", nosig: E + "31m!" };
 function mark(m, target) {
   const mem = members.find((x) => x.id === m.from_id) || (pins[m.from_id] ? { id: m.from_id, pubkey: pins[m.from_id] } : undefined);
   const k = mem?.pubkey || "";
   if (m._v === undefined || m._k !== k) {
     m._k = k;
-    m._v = verdict(pins, mem, m, target);
+    m._v = verdict(pins, mem, { ...m, body: m.raw ?? m.body }, target);
     if (m._v === "unsigned" && k) m._v = "nosig"; // keyed sender but no signature: suspicious
   }
   return MARKS[m._v] + S.r;
@@ -88,7 +113,7 @@ function chatLines(w, list, targetOf) {
       lines.push(S.dim + "─".repeat(2) + label + "─".repeat(Math.max(0, w - label.length - 2)) + S.r);
     }
     const mine = m.from_name === cfg.me;
-    const head = `${S.dim}${hhmm(m.created_at)}${S.r} ${mark(m, targetOf(m))} ${mine ? S.c + "you" : S.g + m.from_name}${S.r}: `;
+    const head = `${S.dim}${hhmm(m.created_at)}${S.r} ${mark(m, targetOf(m))}${m.enc ? "🔒" : " "}${mine ? S.c + "you" : S.g + m.from_name}${S.r}: `;
     const pad = " ".repeat(strip(head).length);
     const body = m.body.split("\n");
     let first = true;
@@ -110,7 +135,7 @@ function draw() {
   const line = (s) => (buf += E + "2K" + s + "\r\n");
 
   line(fit(`${S.b}▣ ${cfg.community}${S.r} ${S.dim}— ${cfg.me}${isAdmin() ? " ★ admin" : ""}${S.r}` +
-    (view === "chat" ? `  ${S.c}${section === "topics" ? "# " + (topics.find((t) => t.id === selTopic)?.title ?? "") : selName}${S.r}${S.dim}  (Esc: back)${S.r}`
+    (view === "chat" ? `  ${S.c}${section === "topics" ? (topics.find((t) => t.id === selTopic)?.private ? "🔒 " : "# ") + (topics.find((t) => t.id === selTopic)?.title ?? "") : selName}${S.r}${S.dim}${section === "topics" ? (topics.find((t) => t.id === selTopic)?.private ? " · end-to-end encrypted · " + (topics.find((t) => t.id === selTopic)?.names || []).join(", ") : "") : (encKeyOf(members.find((m) => m.name === selName)) ? " 🔒 end-to-end encrypted" : " ⚠ no encryption key yet")}  (Esc: back)${S.r}`
       : `  ${section === "people" ? S.inv + " People " + S.r : S.dim + " People " + S.r}${section === "topics" ? S.inv + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" : "") + " " + S.r : S.dim + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? S.y + " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" + S.dim : "") + " " + S.r}${S.dim}  ←/→${S.r}`), W));
 
   const rows = [];
@@ -122,7 +147,7 @@ function draw() {
     if (!topics.length) rows.push(S.dim + " No discussions yet — start one with /topic <title>" + S.r);
     for (let j = 0; j < h && topics[ttop + j]; j++) {
       const t = topics[ttop + j], n = tunread[t.id] ? S.y + ` (${tunread[t.id]})` + S.r : "";
-      const l = fit(` # ${t.title}${t.archived ? S.dim + " [archived]" : ""}${S.r}${n}${S.dim} · ${t.messages} msg · ${t.created_by ?? "?"}${S.r}`, W);
+      const l = fit(` ${t.private ? "🔒" : "#"} ${t.title}${t.archived ? S.dim + " [archived]" : ""}${S.r}${n}${S.dim} · ${t.messages} msg · ${t.created_by ?? "?"}${S.r}`, W);
       rows.push(t.id === selTopic ? S.inv + strip(l).padEnd(W).slice(0, W) + S.r : l);
     }
   } else if (view === "list") {
@@ -183,19 +208,19 @@ async function poll() {
     const fresh = await api(cfg, "GET", `/v1/messages?since=${since}`);
     for (const m of fresh) {
       since = Math.max(since, m.id);
-      msgs.push({ ...m, from_name: clean(m.from_name), to_name: clean(m.to_name), body: clean(m.body) });
+      msgs.push(decorateDM(m));
       if (m.from_name !== cfg.me) {
         if (!(view === "chat" && selName === m.from_name)) unread[m.from_name] = (unread[m.from_name] || 0) + 1;
         if (!firstPoll) {
           const mm = msgs[msgs.length - 1], ok = mark(mm, dmTarget(mm.to_id)).includes("✓");
-          writeJson("last.json", { ...m, verified: ok }); bell();
+          writeJson("last.json", { id: m.id, from_name: mm.from_name, body: mm.body, verified: ok }); bell();
         }
       }
     }
     try { await pollTopics(); } catch (e) { if (!/not found|HTTP 404/.test(e.message)) throw e; }
-    if (!registered && meNow && !meNow.pubkey) {
+    if (!registered && meNow && (!meNow.pubkey || !meNow.enc_pubkey) && (!meNow.pubkey || meNow.pubkey === signer.pubkey)) {
       registered = true;
-      try { await api(cfg, "POST", "/v1/me/key", { pubkey: signer.pubkey }); } catch (e) { status = "signing key: " + e.message; }
+      try { await api(cfg, "POST", "/v1/me/key", { pubkey: signer.pubkey, enc_pubkey: signer.encPub, enc_sig: signEncKey(signer, cfg.id) }); } catch (e) { status = "keys: " + e.message; }
     } else if (meNow?.pubkey && meNow.pubkey !== signer.pubkey && !warnedKey) {
       warnedKey = true; status = "⚠ this device's signing key differs from the registered one — ask an admin to reset it (messages will be rejected)";
     }
@@ -207,18 +232,39 @@ async function poll() {
   draw();
 }
 let firstPoll = true, lastSig = null, registered = false, warnedKey = false, pinsSaved = JSON.stringify(pins);
+// Verify a private topic before trusting it: the creator's signature must cover the title and every member's
+// key wrap (so the server cannot hand us a topic key it knows), and our own wrap must match the signed hash.
+const privOk = {};
+function openPrivate(t) {
+  if (privOk[t.id] === t.bundle_sig) { t.title = privTitle[t.id]; return; }
+  const creator = members.find((m) => m.id === t.created_by_id);
+  const signPub = creator?.pubkey && checkPin(pins, creator.id, creator.pubkey) !== "changed" ? pins[creator.id] : pins[t.created_by_id];
+  try {
+    const hashes = Object.fromEntries(t.members.map((x) => [x.id, x.wrap_hash]));
+    if (!signPub || !hashes[cfg.id] || sha256hex(t.my_wrap) !== hashes[cfg.id]) throw new Error("bad bundle");
+    if (!verifyBytes(signPub, bundleCanonicalH(t.created_by_id, t.title, hashes), t.bundle_sig)) throw new Error("bad signature");
+    const tk = unwrapKey(signer.encPriv, JSON.parse(t.my_wrap), cfg.id);
+    const title = openTopicText(tk, t.title, "title");
+    if (title == null) throw new Error("bad title");
+    tkeys[t.id] = tk; privTitle[t.id] = clean(title).slice(0, 80); privOk[t.id] = t.bundle_sig; t.title = privTitle[t.id];
+    t.names = t.members.map((x) => members.find((m) => m.id === x.id)?.name ?? "?");
+  } catch { t.title = "(unverifiable private topic)"; t.bad = true; }
+}
+const privTitle = {};
 async function pollTopics() {
   topics = await api(cfg, "GET", "/v1/topics");
   for (const t of topics) {
+    if (t.private) openPrivate(t);
+    if (t.private && !tkeys[t.id]) continue;
     if (t.last_id <= (tsince[t.id] ?? 0)) continue;
     const fresh = await api(cfg, "GET", `/v1/topics/${t.id}/messages?since=${tsince[t.id] ?? 0}`);
     const list = (tmsgs[t.id] ||= []);
     for (const m of fresh) {
       tsince[t.id] = Math.max(tsince[t.id] ?? 0, m.id);
-      list.push({ ...m, from_name: clean(m.from_name), body: clean(m.body) });
+      list.push(decorateTopicMsg(m, t.id));
       if (m.from_name !== cfg.me && !firstPoll) {
         const mm = list[list.length - 1];
-        writeJson("last.json", { ...m, from_name: mm.from_name, body: mm.body, verified: mark(mm, topicTarget(t.id)).includes("✓") });
+        writeJson("last.json", { id: m.id, from_name: mm.from_name, body: mm.body, verified: mark(mm, topicTarget(t.id)).includes("✓") });
         if (!(view === "chat" && section === "topics" && selTopic === t.id)) { tunread[t.id] = (tunread[t.id] || 0) + 1; bell(); }
       }
     }
@@ -302,7 +348,7 @@ function confirmRemove(name) {
   draw();
 }
 
-const help = "/who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /topics /people /topic <title> /archive[ undo] /fp [name] /pull [pane] /quit";
+const help = "/who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /topics /people /topic <title> /private <title> | a, b /archive[ undo] /fp [name] /pull [pane] /quit";
 async function command(t) {
   try {
     if (t === "/help") flash(help, 10000);
@@ -349,11 +395,25 @@ async function command(t) {
       const r = await api(cfg, "POST", "/v1/topics", { title: t.slice(7) });
       await poll(); openTopic(r.id);
     }
+    else if (t.startsWith("/private ")) {
+      const [title, rest = ""] = t.slice(9).split("|").map((x) => x.trim());
+      const names = [...new Set(rest.split(",").map((x) => x.trim()).filter(Boolean))].filter((n) => n !== cfg.me);
+      if (!title || !names.length) return flash("usage: /private <title> | name1, name2");
+      const people = [members.find((m) => m.id === cfg.id), ...names.map((n) => members.find((m) => m.name === n))];
+      const bad = names.find((n, i) => !people[i + 1] || !encKeyOf(people[i + 1]));
+      if (bad) return flash(`${bad}: unknown member or no verified encryption key yet`, 6000);
+      const tk = newTopicKey();
+      const encFor = (m) => (m.id === cfg.id ? signer.encPub : encKeyOf(m));
+      const wraps = Object.fromEntries(people.map((m) => [m.id, JSON.stringify(wrapKey(encFor(m), tk, m.id))]));
+      const titleEnv = sealTopicText(tk, title.slice(0, 80), "title");
+      const r = await api(cfg, "POST", "/v1/topics", { private: true, title: titleEnv, wraps, bundle_sig: signBytes(signer, bundleCanonical(cfg.id, titleEnv, wraps)) });
+      await poll(); openTopic(r.id);
+    }
     else if (t.startsWith("/archive")) {
       const id = section === "topics" && selTopic != null ? selTopic : null;
       if (id == null) return flash("open or select a discussion first");
       const un = t.includes("undo");
-      await api(cfg, "POST", `/v1/admin/topics/${id}/archive`, { archived: !un });
+      await api(cfg, "POST", isAdmin() ? `/v1/admin/topics/${id}/archive` : `/v1/topics/${id}/archive`, { archived: !un });
       await poll(); flash(un ? "unarchived" : "archived");
     }
     else if (t.startsWith("/fp")) {
@@ -376,11 +436,21 @@ async function send(body) {
   try {
     if (section === "topics") {
       if (selTopic == null) return flash("open a discussion first (or /topic <title>)");
-      await api(cfg, "POST", `/v1/topics/${selTopic}/messages`, signMessage(signer, cfg.id, topicTarget(selTopic), body));
+      const t = topics.find((x) => x.id === selTopic);
+      if (t?.archived) return flash("this discussion is archived");
+      let text = body;
+      if (t?.private) {
+        if (!tkeys[t.id]) return flash("this private topic could not be verified");
+        text = sealTopicText(tkeys[t.id], canonBody(body), `topic:${t.id}\n${cfg.id}`);
+      }
+      await api(cfg, "POST", `/v1/topics/${selTopic}/messages`, signMessage(signer, cfg.id, topicTarget(selTopic), text));
     } else {
       const to = members.find((m) => m.name === selName);
       if (!to || to.name === cfg.me) return flash("select someone else first");
-      await api(cfg, "POST", "/v1/messages", { to: to.id, ...signMessage(signer, cfg.id, dmTarget(to.id), body) });
+      const theirs = encKeyOf(to);
+      if (!theirs) return flash(`${to.name} has no verified encryption key yet (they must update the plugin and open it once) — nothing was sent`, 8000);
+      const env = sealDM(canonBody(body), cfg.id, dmTarget(to.id), [{ id: cfg.id, encPub: signer.encPub }, { id: to.id, encPub: theirs }]);
+      await api(cfg, "POST", "/v1/messages", { to: to.id, ...signMessage(signer, cfg.id, dmTarget(to.id), env) });
     }
     await poll(); cscroll = 0;
   } catch (e) { flash(e.message); }

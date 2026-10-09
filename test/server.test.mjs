@@ -131,7 +131,8 @@ test("a member with a registered key must sign; forged, replayed and stale messa
   const ada = await addMember(env, "Ada"), bob = await addMember(env, "Bob");
   const s = signer();
   assert.equal((await call(env, "POST", "/v1/me/key", { key: ada.key, body: { pubkey: s.pubkey } })).status, 200);
-  assert.equal((await call(env, "POST", "/v1/me/key", { key: ada.key, body: { pubkey: s.pubkey } })).status, 409); // once only
+  assert.equal((await call(env, "POST", "/v1/me/key", { key: ada.key, body: { pubkey: s.pubkey } })).status, 200); // same key: idempotent
+  assert.equal((await call(env, "POST", "/v1/me/key", { key: ada.key, body: { pubkey: signer().pubkey } })).status, 409); // different key: needs admin reset
   const unsigned = await call(env, "POST", "/v1/messages", { key: ada.key, body: { to: "Bob", body: "hi" } });
   assert.equal(unsigned.status, 400);
   const m = signMessage(s, ada.id, dmTarget(bob.id), "hello");
@@ -195,4 +196,68 @@ test("discussions: anyone opens a topic, posts, admin archives; rate limit; DMs 
   assert.equal((await call(env, "POST", `/v1/admin/topics/${id}/archive`, { key: bob.key })).status, 401);
   assert.equal((await call(env, "POST", `/v1/admin/topics/${id}/archive`, { key: ADMIN })).status, 200);
   assert.equal((await call(env, "POST", `/v1/topics/${id}/messages`, { key: ada.key, body: { body: "late" } })).status, 409);
+});
+
+// ---- encryption keys & private topics ----
+import { signEncKey, signBytes } from "../src/sign.mjs";
+import { sealDM, openDM, newTopicKey, wrapKey, sealTopicText, openTopicText, bundleCanonical } from "../src/e2ee.mjs";
+const enroll = async (env, name) => {
+  const m = await addMember(env, name), d = signer();
+  const r = await call(env, "POST", "/v1/me/key", { key: m.key, body: { pubkey: d.pubkey, enc_pubkey: d.encPub, enc_sig: signEncKey(d, m.id) } });
+  assert.equal(r.status, 200);
+  return { ...m, d };
+};
+
+test("encryption key must be vouched for by the signing key; admin reset clears it", async () => {
+  const env = mk();
+  const ada = await addMember(env, "Ada"), d = signer(), other = signer();
+  const bad = await call(env, "POST", "/v1/me/key", { key: ada.key, body: { pubkey: d.pubkey, enc_pubkey: other.encPub, enc_sig: signEncKey(d, ada.id) } });
+  assert.equal(bad.status, 400); // server (or anyone) cannot register a key the device did not sign
+  await call(env, "POST", "/v1/me/key", { key: ada.key, body: { pubkey: d.pubkey, enc_pubkey: d.encPub, enc_sig: signEncKey(d, ada.id) } });
+  const list = (await call(env, "GET", "/v1/members", { key: ada.key })).json;
+  assert.equal(list[0].enc_pubkey, d.encPub);
+  await call(env, "POST", "/v1/admin/members/Ada/reset-key", { key: ADMIN });
+  assert.equal((await call(env, "GET", "/v1/members", { key: ada.key })).json[0].enc_pubkey, null);
+});
+
+test("encrypted direct message round trip through the server (server sees no plaintext)", async () => {
+  const env = mk();
+  const a = await enroll(env, "Ada"), b = await enroll(env, "Bob");
+  const envp = sealDM("the launch code", a.id, `dm:${b.id}`, [{ id: a.id, encPub: a.d.encPub }, { id: b.id, encPub: b.d.encPub }]);
+  const m = signMessage(a.d, a.id, dmTarget(b.id), envp);
+  assert.equal((await call(env, "POST", "/v1/messages", { key: a.key, body: { to: b.id, ...m } })).status, 201);
+  const row = (await call(env, "GET", "/v1/messages", { key: b.key })).json[0];
+  assert.ok(!row.body.includes("launch"));
+  assert.equal(openDM(row.body, b.id, b.d.encPriv, a.id, dmTarget(b.id)), "the launch code");
+  assert.equal(verifyMessage(a.d.pubkey, { ...row, target: dmTarget(b.id) }), true);
+});
+
+test("private topic: members only, key bundle signed, plaintext rejected, outsiders see nothing", async () => {
+  const env = mk();
+  const a = await enroll(env, "Ada"), b = await enroll(env, "Bob"), c = await enroll(env, "Cem");
+  const tk = newTopicKey(), titleEnv = sealTopicText(tk, "Budget", "title");
+  const wraps = { [a.id]: JSON.stringify(wrapKey(a.d.encPub, tk, a.id)), [b.id]: JSON.stringify(wrapKey(b.d.encPub, tk, b.id)) };
+  const make = (extra = {}) => ({ private: true, title: titleEnv, wraps, bundle_sig: signBytes(a.d, bundleCanonical(a.id, titleEnv, wraps)), ...extra });
+  assert.equal((await call(env, "POST", "/v1/topics", { key: a.key, body: make({ bundle_sig: signBytes(b.d, "x") }) })).status, 400); // forged bundle
+  assert.equal((await call(env, "POST", "/v1/topics", { key: a.key, body: make({ title: "Budget" }) })).status, 400);               // plaintext title
+  const made = await call(env, "POST", "/v1/topics", { key: a.key, body: make() });
+  assert.equal(made.status, 201);
+  const id = made.json.id;
+  // listing: members get their wrap, outsiders get nothing
+  const mine = (await call(env, "GET", "/v1/topics", { key: b.key })).json;
+  assert.equal(mine.length, 1); assert.equal(mine[0].private, true); assert.ok(mine[0].my_wrap); assert.equal(mine[0].members.length, 2);
+  assert.equal((await call(env, "GET", "/v1/topics", { key: c.key })).json.length, 0);
+  assert.equal((await call(env, "GET", `/v1/topics/${id}/messages`, { key: c.key })).status, 404);
+  assert.equal((await call(env, "POST", `/v1/topics/${id}/messages`, { key: c.key, body: { body: "e2ee1t:xx" } })).status, 404);
+  // only ciphertext is accepted
+  assert.equal((await call(env, "POST", `/v1/topics/${id}/messages`, { key: b.key, body: signMessage(b.d, b.id, topicTarget(id), "plain") })).status, 400);
+  const enc = sealTopicText(tk, "agreed", `topic:${id}\n${b.id}`);
+  assert.equal((await call(env, "POST", `/v1/topics/${id}/messages`, { key: b.key, body: signMessage(b.d, b.id, topicTarget(id), enc) })).status, 201);
+  const got = (await call(env, "GET", `/v1/topics/${id}/messages`, { key: a.key })).json;
+  assert.equal(openTopicText(tk, got[0].body, `topic:${id}\n${b.id}`), "agreed");
+  // creator archives; removed members lose all access
+  assert.equal((await call(env, "POST", `/v1/topics/${id}/archive`, { key: b.key })).status, 403);
+  assert.equal((await call(env, "POST", `/v1/topics/${id}/archive`, { key: a.key })).status, 200);
+  await call(env, "POST", "/v1/admin/members/Bob/revoke", { key: ADMIN });
+  assert.equal((await call(env, "GET", `/v1/topics/${id}/messages`, { key: b.key })).status, 401);
 });

@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS members (
   revoked INTEGER NOT NULL DEFAULT 0,
   last_seen INTEGER NOT NULL DEFAULT 0,
   pubkey TEXT,
+  enc_pubkey TEXT,
+  enc_sig TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS messages (
@@ -42,5 +44,13 @@ CREATE TABLE IF NOT EXISTS topics (
   title TEXT NOT NULL,
   created_by TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  archived INTEGER NOT NULL DEFAULT 0
+  archived INTEGER NOT NULL DEFAULT 0,
+  private INTEGER NOT NULL DEFAULT 0,
+  bundle_sig TEXT
+);
+CREATE TABLE IF NOT EXISTS topic_members (
+  topic_id INTEGER NOT NULL,
+  member_id TEXT NOT NULL,
+  wrap TEXT NOT NULL,
+  PRIMARY KEY (topic_id, member_id)
 );

@@ -36,3 +36,44 @@ test("update check caches for 6 hours and never throws", async () => {
   const bad = { read: () => null, write() {} };
   assert.equal(await checkUpdate("0.2.0", bad, async () => { throw new Error("offline"); }), null);
 });
+
+import fs from "node:fs";
+import os from "node:os";
+import { loadOrCreateSigner, signEncKey, verifyEncKey, signBytes, verifyBytes } from "../src/sign.mjs";
+import { sealDM, openDM, newTopicKey, wrapKey, unwrapKey, sealTopicText, openTopicText, bundleCanonical } from "../src/e2ee.mjs";
+const dev = () => loadOrCreateSigner(fs.mkdtempSync(os.tmpdir() + "/e"));
+
+test("encryption key is vouched for by the signing key", () => {
+  const a = dev(), b = dev();
+  const sig = signEncKey(a, "A");
+  assert.equal(verifyEncKey(a.pubkey, "A", a.encPub, sig), true);
+  assert.equal(verifyEncKey(a.pubkey, "A", b.encPub, sig), false); // server swapped the key
+  assert.equal(verifyEncKey(b.pubkey, "A", a.encPub, sig), false);
+});
+
+test("DM: recipient and sender can read, a third device and tampering cannot", () => {
+  const a = dev(), b = dev(), c = dev();
+  const env = sealDM("secret ✓ merhaba", "A", "dm:B", [{ id: "A", encPub: a.encPub }, { id: "B", encPub: b.encPub }]);
+  assert.ok(!env.includes("secret"));
+  assert.equal(openDM(env, "B", b.encPriv, "A", "dm:B"), "secret ✓ merhaba");
+  assert.equal(openDM(env, "A", a.encPriv, "A", "dm:B"), "secret ✓ merhaba");
+  assert.equal(openDM(env, "B", c.encPriv, "A", "dm:B"), null);          // wrong device
+  assert.equal(openDM(env, "B", b.encPriv, "A", "dm:Z"), null);          // moved to another conversation
+  assert.equal(openDM(env, "B", b.encPriv, "X", "dm:B"), null);          // claimed sender differs
+  assert.equal(openDM(env.slice(0, -4) + "AAAA", "B", b.encPriv, "A", "dm:B"), null);
+});
+
+test("private topic: members unwrap the topic key; outsiders and a swapped key fail; bundle signature binds wraps", () => {
+  const a = dev(), b = dev(), x = dev();
+  const tk = newTopicKey();
+  const wa = JSON.stringify(wrapKey(a.encPub, tk, "A")), wb = JSON.stringify(wrapKey(b.encPub, tk, "B"));
+  assert.deepEqual(unwrapKey(b.encPriv, JSON.parse(wb), "B"), tk);
+  assert.throws(() => unwrapKey(x.encPriv, JSON.parse(wb), "B"));
+  const m = sealTopicText(tk, "plan", "topic:1\nA");
+  assert.equal(openTopicText(tk, m, "topic:1\nA"), "plan");
+  assert.equal(openTopicText(newTopicKey(), m, "topic:1\nA"), null);
+  const canon = bundleCanonical("A", "title-env", { A: wa, B: wb });
+  const sig = signBytes(a, canon);
+  assert.equal(verifyBytes(a.pubkey, canon, sig), true);
+  assert.equal(verifyBytes(a.pubkey, bundleCanonical("A", "title-env", { A: wa, B: JSON.stringify(wrapKey(b.encPub, newTopicKey(), "B")) }), sig), false);
+});

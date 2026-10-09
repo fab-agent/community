@@ -1,6 +1,8 @@
 # End-to-end encryption — design note
 
-Status: **encryption is a proposal, not implemented.** The *sender authenticity* part (Ed25519 signatures, key pinning, safety numbers) shipped in v0.2.0 — see the README's "Signed messages". Today message bodies are stored in plain text on the community server (see the README's security notes). This note describes how direct messages could become end-to-end encrypted without changing the product's shape. We will revisit it based on how the plugin is actually used.
+Status: **implemented in v0.3.0** (simplified: per-message content key wrapped for each recipient, one key per private topic, no forward secrecy/ratchet, one device per member). The original proposal text follows.
+
+(Previous status: encryption was a proposal.) The *sender authenticity* part (Ed25519 signatures, key pinning, safety numbers) shipped in v0.2.0 — see the README's "Signed messages". Today message bodies are stored in plain text on the community server (see the README's security notes). This note describes how direct messages could become end-to-end encrypted without changing the product's shape. We will revisit it based on how the plugin is actually used.
 
 ## Goals
 

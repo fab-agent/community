@@ -5,26 +5,45 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { clean } from "./lib.mjs";
+import { newEncKeys, rawPublic } from "./e2ee.mjs";
 
 // Must match the Worker's `clip(body, 4000).trim()` exactly: the signature covers the stored text.
-export const canonBody = (s) => clean(s).slice(0, 4000).trim();
+// Encrypted envelopes ("e2ee1…") may be longer than plain text.
+export const canonBody = (s) => clean(s).slice(0, /^e2ee1/.test(s) ? 16000 : 4000).trim();
 export const canonical = (from, target, ts, nonce, body) => `community/v1\n${from}\n${target}\n${ts}\n${nonce}\n${body}`;
 export const dmTarget = (toId) => `dm:${toId}`;
 export const topicTarget = (topicId) => `topic:${topicId}`;
 
 const rawPub = (pubKeyObj) => Buffer.from(pubKeyObj.export({ format: "jwk" }).x, "base64url").toString("base64");
 
+export const encKeyCanonical = (id, encPub) => `community/v1 enc\n${id}\n${encPub}`;
+// signing.json holds both private keys (Ed25519 for signatures, X25519 for decryption). Mode 0600.
 export function loadOrCreateSigner(dir) {
   const f = path.join(dir, "signing.json");
+  let j = {};
+  try { j = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+  let changed = false;
+  if (!j.pem) { j.pem = crypto.generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }); changed = true; }
+  if (!j.encPem) { j.encPem = newEncKeys().priv.export({ type: "pkcs8", format: "pem" }); changed = true; }
+  if (changed) { fs.writeFileSync(f, JSON.stringify(j), { mode: 0o600 }); fs.chmodSync(f, 0o600); }
+  const priv = crypto.createPrivateKey(j.pem), encPriv = crypto.createPrivateKey(j.encPem);
+  return { priv, pubkey: rawPub(crypto.createPublicKey(priv)), encPriv, encPub: rawPublic(crypto.createPublicKey(encPriv)) };
+}
+// The device vouches for its encryption key, so the server cannot substitute its own.
+export const signEncKey = (signer, id) =>
+  crypto.sign(null, Buffer.from(encKeyCanonical(id, signer.encPub)), signer.priv).toString("base64");
+export function verifyEncKey(signPub, id, encPub, encSig) {
   try {
-    const { pem } = JSON.parse(fs.readFileSync(f, "utf8"));
-    const priv = crypto.createPrivateKey(pem);
-    return { priv, pubkey: rawPub(crypto.createPublicKey(priv)) };
-  } catch {}
-  const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
-  fs.writeFileSync(f, JSON.stringify({ pem: privateKey.export({ type: "pkcs8", format: "pem" }) }), { mode: 0o600 });
-  fs.chmodSync(f, 0o600);
-  return { priv: privateKey, pubkey: rawPub(publicKey) };
+    const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(signPub, "base64")]);
+    return crypto.verify(null, Buffer.from(encKeyCanonical(id, encPub)), crypto.createPublicKey({ key: spki, format: "der", type: "spki" }), Buffer.from(encSig, "base64"));
+  } catch { return false; }
+}
+export const signBytes = (signer, text) => crypto.sign(null, Buffer.from(text), signer.priv).toString("base64");
+export function verifyBytes(signPub, text, sig) {
+  try {
+    const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(signPub, "base64")]);
+    return crypto.verify(null, Buffer.from(text), crypto.createPublicKey({ key: spki, format: "der", type: "spki" }), Buffer.from(sig, "base64"));
+  } catch { return false; }
 }
 
 export function signMessage(signer, fromId, target, rawBody) {
