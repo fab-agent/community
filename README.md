@@ -6,7 +6,7 @@
 
 [![Watch the 45-second film on YouTube](docs/promo-poster.jpg)](https://www.youtube.com/watch?v=rGXIWuEsS4o)
 
-<sub>▶ [Watch on YouTube](https://www.youtube.com/watch?v=rGXIWuEsS4o) (45 s) · [download the MP4](https://github.com/fab-agent/community/releases/download/v0.3.0/community-promo.mp4). Your terminal and your human team, in one runtime.</sub>
+<sub>▶ [Watch on YouTube](https://www.youtube.com/watch?v=rGXIWuEsS4o) (45 s). Your terminal and your human team, in one runtime.</sub>
 
 Herdr's sidebar shows your workspaces and the agents inside them. **Community** adds one more workspace — marked with `▣` — that connects you to the people you work with: members grouped by department, their role and current task, who is online, and direct messages.
 
