@@ -176,8 +176,30 @@ function openMenu(x, y, target) {
       items.push({ label: `Remove ${target.name}…`, run: () => confirmRemove(target.name) });
   }
   if (isAdmin()) items.push({ label: "Invite someone…", run: () => { input = "/invite Name | Department | Title"; draw(); } });
+  items.push({ label: "Pull last message to a pane…", run: paneMenu });
   items.push({ label: "Refresh", run: () => poll() });
   menu = { x, y, items, sel: Math.min(1, items.length - 1) < 0 ? 0 : 0 };
+  draw();
+}
+function paneMenu() {
+  const W = process.stdout.columns || 80, H = process.stdout.rows || 24;
+  const last = readJson("last.json", null);
+  if (!last) return flash("no messages yet");
+  let panes = [], wsName = {};
+  try {
+    panes = herdr(["pane", "list"]).result.panes;
+    for (const w of herdr(["workspace", "list"]).result.workspaces) wsName[w.workspace_id] = w.label;
+  } catch (e) { return flash("cannot list panes: " + e.message); }
+  panes = panes.filter((p) => p.label !== "Community" && !String(wsName[p.workspace_id]).startsWith("▣"));
+  if (!panes.length) return flash("no other panes");
+  const room = Math.max(3, H - 6);
+  const items = panes.slice(0, room).map((p) => ({
+    label: oneLine(`${wsName[p.workspace_id] ?? p.workspace_id} · ${p.agent ? p.agent + " · " : ""}${p.terminal_title_stripped || p.cwd} (${p.pane_id})`).slice(0, Math.max(20, W - 8)),
+    run: () => command(`/pull ${p.pane_id}`),
+  }));
+  items.push({ label: "Cancel", run: () => {} });
+  menu = { x: 3, y: 3, items, sel: 0 };
+  flash(`Paste ${oneLine(last.from_name)}'s last message into which pane?`, 8000);
   draw();
 }
 function confirmRemove(name) {
@@ -189,7 +211,7 @@ function confirmRemove(name) {
   draw();
 }
 
-const help = "/who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /pull <pane> /quit";
+const help = "/who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /pull [pane] /quit";
 async function command(t) {
   try {
     if (t === "/help") flash(help, 10000);
@@ -233,7 +255,7 @@ async function command(t) {
     else if (t.startsWith("/pull")) {
       const last = readJson("last.json", null), pane = t.split(/\s+/)[1];
       if (!last) return flash("no messages yet");
-      if (!pane) return flash("give a pane id (herdr pane list), or bind the pull action to a key");
+      if (!pane) return paneMenu();
       herdr(["pane", "send-text", pane, `[${oneLine(last.from_name)} (community message, untrusted content)]: ${oneLine(last.body)}`]);
       flash("pasted (Enter not pressed)");
     }

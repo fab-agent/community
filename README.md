@@ -53,7 +53,7 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/rename <new name>`, `/title <text>`, `/dept <text>` | Edit your own profile. Admins can edit others: `/rename <old> \| <new>` (same for `/title`, `/dept`) |
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
-| `/pull <pane-id>` | Paste the last received message into another pane (Enter is **not** pressed) |
+| `/pull [pane-id]` | Paste the last received message into another pane (no id → picker) (Enter is **not** pressed) |
 | `/help`, `/quit` | Help / leave (reopen with `community.open`) |
 
 Herdr does not bind `Tab`, so it always reaches the community pane. If right-click opens Herdr's own menu instead of ours, set `ui.right_click_passthrough_modifier = "alt"` in Herdr's config and use Alt+right-click.
@@ -62,7 +62,7 @@ Unread messages show as a yellow `(n)` badge next to the sender and ring the ter
 
 ### Bring a message to your agent
 
-**Quickest way (no config):** find the pane id of your agent, then type this in the community chat:
+**Quickest way (no config):** type `/pull` in the community chat (or Tab → "Pull last message to a pane…"). A picker lists every pane in every workspace (`workspace · agent · title (pane-id)`); choose one with ↑/↓ + Enter. If you already know the pane id, skip the picker:
 
 ```sh
 herdr pane list          # run in any shell; look for "pane_id", e.g. "w5:p1"
