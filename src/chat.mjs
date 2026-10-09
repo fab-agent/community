@@ -236,7 +236,7 @@ let firstPoll = true, lastSig = null, registered = false, warnedKey = false, pin
 // key wrap (so the server cannot hand us a topic key it knows), and our own wrap must match the signed hash.
 const privOk = {};
 function openPrivate(t) {
-  if (privOk[t.id] === t.bundle_sig) { t.title = privTitle[t.id]; return; }
+  if (privOk[t.id] === t.bundle_sig) { t.title = privTitle[t.id]; t.names = t.members.map((x) => members.find((m) => m.id === x.id)?.name ?? "?"); return; }
   const creator = members.find((m) => m.id === t.created_by_id);
   const signPub = creator?.pubkey && checkPin(pins, creator.id, creator.pubkey) !== "changed" ? pins[creator.id] : pins[t.created_by_id];
   try {
