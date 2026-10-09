@@ -56,9 +56,35 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/pull [pane-id]` | Paste the last received message into another pane (no id → picker) (Enter is **not** pressed) |
 | `/help`, `/quit` | Help / leave (reopen with `community.open`) |
 
+### Discussions
+
+Besides direct messages there are **discussions**: open topics everyone in the community can read and post to (the community is closed, so "everyone" means invited members). Press `→` (or `/topics`) to switch from **People** to **Discussions**, `←` to go back.
+
+| Input | What it does |
+| --- | --- |
+| `/topic <title>` | Open a new discussion (any member; one per 30 s) and jump into it |
+| `Enter` / double-click | Open the highlighted discussion; plain text posts to it |
+| `/archive`, `/archive undo` | **Admins only.** Archive (read-only) or restore the open discussion |
+| `/people`, `/topics` | Switch section |
+
+### Signed messages
+
+Every message is signed on the sender's device with an Ed25519 key that never leaves it, and checked again by the server and by every reader:
+
+| Mark | Meaning |
+| --- | --- |
+| `✓` | Signature valid for the sender's pinned key |
+| `·` | Sender has no signing key yet (older client) — unverifiable |
+| `!` | Sender has a key but this message is unsigned — treat as suspicious |
+| `✗ forged` / `⚠ key changed` | Bad signature / the sender's key differs from the one you pinned |
+
+Keys are pinned on first sight (trust on first use). To rule out a swapped key, compare safety numbers by voice: `/fp` shows yours, `/fp <name>` shows theirs (also in the Tab menu). If a member loses their device, an admin resets their key (`POST /v1/admin/members/<name>/reset-key`) and they register a new one.
+
+This proves **who wrote a message and that it was not altered or invented by the server or another member**. It does not make the text safe: a real colleague can still send a prompt-injection, which is why `/pull` labels everything `untrusted` and adds `signature verified` or `UNVERIFIED`.
+
 Herdr does not bind `Tab`, so it always reaches the community pane. If right-click opens Herdr's own menu instead of ours, set `ui.right_click_passthrough_modifier = "alt"` in Herdr's config and use Alt+right-click.
 
-Unread messages show as a yellow `(n)` badge next to the sender and ring the terminal bell.
+Unread messages show as a yellow `(n)` badge next to the sender or discussion and ring the terminal bell.
 
 ### Bring a message to your agent
 
@@ -115,6 +141,17 @@ openssl rand -hex 24 | sed 's/^/fca_/' | npx wrangler secret put ADMIN_KEY
 npx wrangler deploy
 ```
 
+### Upgrading an existing server
+
+Fresh installs use `schema.sql`. If you deployed an earlier version, apply the migrations you have not run yet, then redeploy:
+
+```sh
+npx wrangler d1 execute community --remote --file=migrations/0003_topics_signatures.sql   # discussions + signatures
+npx wrangler deploy
+```
+
+Old clients keep working (members without a signing key can still send unsigned messages) but see `·` instead of `✓`.
+
 ### Configuration and retention
 
 Everything is configured in `server/wrangler.jsonc`:
@@ -159,8 +196,11 @@ Why this is safer than handing out keys: a leaked invite is useless once redeeme
 | `GET /v1/community` | – | Community name |
 | `GET /v1/me`, `PATCH /v1/me` | member | Your profile; update `name`, `task`, `title`, `department` |
 | `GET /v1/members` | member | All active members with online flag |
-| `POST /v1/messages` | member | `{ "to": "<name or id>", "body": "…" }` |
-| `GET /v1/messages?since=<id>&peer=<name>` | member | Messages you sent or received |
+| `POST /v1/me/key` | member | Register your device's Ed25519 public key (once; base64 raw) |
+| `POST /v1/messages` | member | `{ "to": "<name or id>", "body", "ts", "nonce", "sig" }` (signature required once you have a key) |
+| `GET /v1/messages?since=<id>&peer=<name>` | member | Direct messages you sent or received |
+| `POST/GET /v1/topics`, `POST/GET /v1/topics/<id>/messages` | member | Discussions: open, list, post, read |
+| `POST /v1/admin/topics/<id>/archive`, `POST …/members/<name>/reset-key` | admin | Archive a discussion / forget a lost signing key |
 | `POST /v1/join` | invite code | Redeem an invite, receive a personal key (once) |
 | `POST/GET /v1/admin/invites`, `POST …/invites/<name>/cancel` | admin | Create, list, cancel invites |
 | `GET /v1/admin/members`, `POST …/members/<name>/revoke`, `POST …/members/<name>/profile` | admin | List, revoke, edit others' name/title/department |
@@ -169,7 +209,7 @@ Why this is safer than handing out keys: a leaked invite is useless once redeeme
 
 ## Security notes
 
-Messages are not end-to-end encrypted yet; see the [E2EE design note](docs/e2ee-design.md).
+Messages are **signed** (authenticity and integrity, see above) but not yet **encrypted**: the server operator can read them. See the [E2EE design note](docs/e2ee-design.md).
 
 * Herdr plugins run as your user without a sandbox. Read the code before installing — it is small on purpose.
 * Your key is stored in the plugin config directory with mode `0600`. Never commit it.
@@ -179,7 +219,8 @@ Messages are not end-to-end encrypted yet; see the [E2EE design note](docs/e2ee-
 ## Roadmap
 
 * Real-time delivery (WebSocket / Durable Object) instead of polling
-* Group channels and department rooms
+* Private (invite-only) discussions and department rooms
+* End-to-end encryption of message bodies (signing is already in)
 * An admin CLI for member management
 * Colored workspace / sidebar section, once Herdr's plugin API supports it
 

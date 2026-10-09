@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS members (
   role TEXT NOT NULL DEFAULT 'member',
   revoked INTEGER NOT NULL DEFAULT 0,
   last_seen INTEGER NOT NULL DEFAULT 0,
+  pubkey TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS messages (
@@ -15,7 +16,11 @@ CREATE TABLE IF NOT EXISTS messages (
   from_id TEXT NOT NULL,
   to_id TEXT NOT NULL,
   body TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  topic_id INTEGER,
+  ts INTEGER,
+  nonce TEXT,
+  sig TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_msg_to ON messages(to_id, id);
 CREATE INDEX IF NOT EXISTS idx_msg_from ON messages(from_id, id);
@@ -29,4 +34,13 @@ CREATE TABLE IF NOT EXISTS invites (
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   used_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_nonce ON messages(from_id, nonce) WHERE nonce IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_msg_topic ON messages(topic_id, id);
+CREATE TABLE IF NOT EXISTS topics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  archived INTEGER NOT NULL DEFAULT 0
 );

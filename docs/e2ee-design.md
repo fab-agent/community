@@ -1,6 +1,6 @@
 # End-to-end encryption — design note
 
-Status: **proposal, not implemented.** Today message bodies are stored in plain text on the community server (see the README's security notes). This note describes how direct messages could become end-to-end encrypted without changing the product's shape. We will revisit it based on how the plugin is actually used.
+Status: **encryption is a proposal, not implemented.** The *sender authenticity* part (Ed25519 signatures, key pinning, safety numbers) shipped in v0.2.0 — see the README's "Signed messages". Today message bodies are stored in plain text on the community server (see the README's security notes). This note describes how direct messages could become end-to-end encrypted without changing the product's shape. We will revisit it based on how the plugin is actually used.
 
 ## Goals
 

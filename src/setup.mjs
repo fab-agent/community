@@ -1,5 +1,6 @@
 import readline from "node:readline/promises";
-import { loadConfig, saveConfig, api } from "./lib.mjs";
+import { loadConfig, saveConfig, api, configDir } from "./lib.mjs";
+import { loadOrCreateSigner } from "./sign.mjs";
 import { execFileSync } from "node:child_process";
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -11,7 +12,7 @@ rl.close();
 try {
   if (key.startsWith("fci_")) {
     const r = await fetch(url.replace(/\/$/, "") + "/v1/join", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: key }),
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: key, pubkey: loadOrCreateSigner(configDir()).pubkey }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
