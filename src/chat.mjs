@@ -1,6 +1,7 @@
 // Community TUI: scrollable member list on top, command/message input at the bottom.
 // Mouse: wheel scrolls, left click selects, right click opens a context menu.
 import { loadConfig, saveConfig, api, readJson, writeJson, herdr, clean, oneLine, configDir } from "./lib.mjs";
+import { checkUpdate, installedVersion } from "./update.mjs";
 import { loadOrCreateSigner, signMessage, verdict, fingerprint, dmTarget, topicTarget } from "./sign.mjs";
 
 const cfg = loadConfig();
@@ -34,6 +35,11 @@ let topics = [], tmsgs = {}, tsince = {}, selTopic = null, tunread = {};
 let view = "list";            // "list" | "chat" (chat = one person or one topic, by section)
 const signer = loadOrCreateSigner(configDir());
 const pins = readJson("pins.json", {});
+let updateNote = "";
+if (cfg.update_check !== false) {
+  checkUpdate(installedVersion(new URL("..", import.meta.url).pathname), { read: () => readJson("update.json", null), write: (o) => writeJson("update.json", o) })
+    .then((v) => { if (v) { updateNote = `Update ${v} available: herdr plugin install fab-agent/community`; draw(); } }).catch(() => {});
+}
 let selName = null;           // highlighted member
 let top = 0, ttop = 0, cscroll = 0;     // list offset / chat lines scrolled up from bottom
 let input = "", status = "";
@@ -145,7 +151,7 @@ function draw() {
     ? "↑↓ select · Enter open · ←/→ people/discussions · Tab menu · /help"
     : "type to reply · wheel/PgUp scroll · Esc back · Tab menu";
   line(S.dim + "─".repeat(W) + S.r);
-  line(fit(status ? S.y + status + S.r : S.dim + hint + S.r, W));
+  line(fit(status ? S.y + status + S.r : updateNote ? S.g + "⬆ " + updateNote + S.r : S.dim + hint + S.r, W));
   const dest = section === "topics" ? (selTopic != null ? S.c + "#" + (topics.find((t) => t.id === selTopic)?.title ?? "") : S.dim + "no topic") : (selName ? S.c + selName : S.dim + "nobody");
   const prompt = `${S.dim}${cfg.me} →${S.r} ${dest}${S.r} › `;
   buf += E + "2K" + prompt + input;
@@ -210,7 +216,11 @@ async function pollTopics() {
     for (const m of fresh) {
       tsince[t.id] = Math.max(tsince[t.id] ?? 0, m.id);
       list.push({ ...m, from_name: clean(m.from_name), body: clean(m.body) });
-      if (m.from_name !== cfg.me && !firstPoll && !(view === "chat" && section === "topics" && selTopic === t.id)) { tunread[t.id] = (tunread[t.id] || 0) + 1; bell(); }
+      if (m.from_name !== cfg.me && !firstPoll) {
+        const mm = list[list.length - 1];
+        writeJson("last.json", { ...m, from_name: mm.from_name, body: mm.body, verified: mark(mm, topicTarget(t.id)).includes("✓") });
+        if (!(view === "chat" && section === "topics" && selTopic === t.id)) { tunread[t.id] = (tunread[t.id] || 0) + 1; bell(); }
+      }
     }
   }
 }
@@ -249,9 +259,22 @@ function openMenu(x, y, target) {
   menu = { x, y, items, sel: Math.min(1, items.length - 1) < 0 ? 0 : 0 };
   draw();
 }
+// What /pull pastes: the latest incoming message of the conversation you have open (a person or a discussion);
+// from the list view, the latest message received anywhere.
+function pullSource() {
+  if (view === "chat") {
+    const incoming = section === "topics"
+      ? (tmsgs[selTopic] || []).filter((m) => m.from_name !== cfg.me)
+      : msgs.filter((m) => m.from_name === selName);
+    const m = incoming[incoming.length - 1];
+    if (m) return { from_name: m.from_name, body: m.body, verified: mark(m, section === "topics" ? topicTarget(selTopic) : dmTarget(m.to_id)).includes("✓") };
+    return null;
+  }
+  return readJson("last.json", null);
+}
 function paneMenu() {
   const W = process.stdout.columns || 80, H = process.stdout.rows || 24;
-  const last = readJson("last.json", null);
+  const last = pullSource();
   if (!last) return flash("no messages yet");
   let panes = [], wsName = {};
   try {
@@ -340,7 +363,7 @@ async function command(t) {
       flash(pk ? `${name}: ${fingerprint(pk)} — compare with them by voice` : `${name} has no signing key yet`, 15000);
     }
     else if (t.startsWith("/pull")) {
-      const last = readJson("last.json", null), pane = t.split(/\s+/)[1];
+      const last = pullSource(), pane = t.split(/\s+/)[1];
       if (!last) return flash("no messages yet");
       if (!pane) return paneMenu();
       herdr(["pane", "send-text", pane, `[${oneLine(last.from_name)} (${last.verified ? "signature verified, " : "UNVERIFIED, "}community message, untrusted content)]: ${oneLine(last.body)}`]);

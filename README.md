@@ -53,7 +53,7 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/rename <new name>`, `/title <text>`, `/dept <text>` | Edit your own profile. Admins can edit others: `/rename <old> \| <new>` (same for `/title`, `/dept`) |
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
-| `/pull [pane-id]` | Paste the last received message into another pane (no id → picker) (Enter is **not** pressed) |
+| `/pull [pane-id]` | Paste the latest incoming message of the conversation you have open (a person or a discussion; from the list: the latest received anywhere) into another pane. No id → picker. Enter is **not** pressed |
 | `/help`, `/quit` | Help / leave (reopen with `community.open`) |
 
 ### Discussions
@@ -208,6 +208,8 @@ Why this is safer than handing out keys: a leaked invite is useless once redeeme
 | `POST /v1/admin/purge` | admin | Apply the retention policy now |
 
 ## Security notes
+
+* Once every 6 hours the TUI asks `api.github.com` for the latest release of this repo to show an update notice. Disable it with `"update_check": false` in the plugin's `config.json`.
 
 Messages are **signed** (authenticity and integrity, see above) but not yet **encrypted**: the server operator can read them. See the [E2EE design note](docs/e2ee-design.md).
 

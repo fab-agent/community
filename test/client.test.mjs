@@ -17,3 +17,22 @@ test("clean tolerates null and numbers", () => {
   assert.equal(clean(null), "");
   assert.equal(clean(5), "5");
 });
+
+import { newer, checkUpdate } from "../src/update.mjs";
+test("version compare", () => {
+  assert.equal(newer("v0.3.0", "0.2.0"), true);
+  assert.equal(newer("0.2.0", "0.2.0"), false);
+  assert.equal(newer("0.2.1", "0.10.0"), false);
+  assert.equal(newer("1.0.0", "0.9.9"), true);
+});
+test("update check caches for 6 hours and never throws", async () => {
+  let cache = null, calls = 0;
+  const store = { read: () => cache, write: (o) => { cache = o; } };
+  const f = async () => { calls++; return { ok: true, json: async () => ({ tag_name: "v0.3.0" }) }; };
+  assert.equal(await checkUpdate("0.2.0", store, f, 1000), "0.3.0");
+  assert.equal(await checkUpdate("0.2.0", store, f, 2000), "0.3.0");
+  assert.equal(calls, 1);
+  assert.equal(await checkUpdate("0.3.0", store, f, 3000), null);
+  const bad = { read: () => null, write() {} };
+  assert.equal(await checkUpdate("0.2.0", bad, async () => { throw new Error("offline"); }), null);
+});
