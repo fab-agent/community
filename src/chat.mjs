@@ -9,6 +9,13 @@ const E = "\x1b[";
 const S = { dim: E + "2m", b: E + "1m", g: E + "32m", y: E + "33m", c: E + "36m", inv: E + "7m", r: E + "0m" };
 const out = (s) => process.stdout.write(s);
 const hhmm = (t) => new Date(t).toTimeString().slice(0, 5);
+const dayKey = (t) => new Date(t).toDateString();
+const dayLabel = (t) => {
+  const d = new Date(t), now = new Date(), yest = new Date(now - 864e5);
+  if (d.toDateString() === now.toDateString()) return "Today";
+  if (d.toDateString() === yest.toDateString()) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+};
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const fit = (s, w) => { // truncate by visible width, keep colour codes
   let n = 0, o = "";
@@ -51,7 +58,13 @@ function memberLine(m, selected, w) {
 }
 function chatLines(w) {
   const lines = [];
+  let lastDay = null;
   for (const m of msgs.filter((x) => x.from_name === selName || x.to_name === selName)) {
+    if (dayKey(m.created_at) !== lastDay) {
+      lastDay = dayKey(m.created_at);
+      const label = ` ${dayLabel(m.created_at)} `;
+      lines.push(S.dim + "─".repeat(2) + label + "─".repeat(Math.max(0, w - label.length - 2)) + S.r);
+    }
     const mine = m.from_name === cfg.me;
     const head = `${S.dim}${hhmm(m.created_at)}${S.r} ${mine ? S.c + "you" : S.g + m.from_name}${S.r}: `;
     const pad = " ".repeat(strip(head).length);

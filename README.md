@@ -62,6 +62,17 @@ Unread messages show as a yellow `(n)` badge next to the sender and ring the ter
 
 ### Bring a message to your agent
 
+**Quickest way (no config):** find the pane id of your agent, then type this in the community chat:
+
+```sh
+herdr pane list          # run in any shell; look for "pane_id", e.g. "w5:p1"
+```
+```
+/pull w5:p1
+```
+
+The last received message is typed into that pane (any workspace). Enter is not pressed.
+
 Bind the `pull` action to a key in `~/.config/herdr/config.toml`:
 
 ```toml
