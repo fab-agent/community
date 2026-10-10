@@ -3,6 +3,7 @@
 import { loadConfig, saveConfig, api, readJson, writeJson, herdr, clean, oneLine, configDir } from "./lib.mjs";
 import { checkUpdate, installedVersion } from "./update.mjs";
 import { loadOrCreateSigner, signMessage, verdict, fingerprint, dmTarget, topicTarget, checkPin, signEncKey, verifyEncKey, signBytes, verifyBytes, canonBody } from "./sign.mjs";
+import { listAgents, agentCard, outputExcerpt, outputMessage } from "./share.mjs";
 import { sealDM, openDM, newTopicKey, wrapKey, unwrapKey, sealTopicText, openTopicText, bundleCanonical, bundleCanonicalH, sha256hex, DM_PREFIX, TOPIC_PREFIX } from "./e2ee.mjs";
 
 const cfg = loadConfig();
@@ -31,7 +32,9 @@ const fit = (s, w) => { // truncate by visible width, keep colour codes
 };
 
 let members = [], msgs = [], since = 0;
-let section = "people";       // "people" | "topics" (Left/Right switches when the input is empty)
+let section = "people";       // "people" | "topics" | "agents" (Left/Right switches when the input is empty)
+let agents = [], selAgent = null, atop = 0;
+let preview = null;           // { to, text, note } — nothing about an agent leaves this machine until you press Enter here
 let topics = [], tmsgs = {}, tsince = {}, selTopic = null, tunread = {};
 let view = "list";            // "list" | "chat" (chat = one person or one topic, by section)
 const signer = loadOrCreateSigner(configDir());
@@ -136,10 +139,30 @@ function draw() {
 
   line(fit(`${S.b}▣ ${cfg.community}${S.r} ${S.dim}— ${cfg.me}${isAdmin() ? " ★ admin" : ""}${S.r}` +
     (view === "chat" ? `  ${S.c}${section === "topics" ? (topics.find((t) => t.id === selTopic)?.private ? "🔒 " : "# ") + (topics.find((t) => t.id === selTopic)?.title ?? "") : selName}${S.r}${S.dim}${section === "topics" ? (topics.find((t) => t.id === selTopic)?.private ? " · end-to-end encrypted · " + (topics.find((t) => t.id === selTopic)?.names || []).join(", ") : "") : (encKeyOf(members.find((m) => m.name === selName)) ? " 🔒 end-to-end encrypted" : " ⚠ no encryption key yet")}  (Esc: back)${S.r}`
-      : `  ${section === "people" ? S.inv + " People " + S.r : S.dim + " People " + S.r}${section === "topics" ? S.inv + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" : "") + " " + S.r : S.dim + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? S.y + " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" + S.dim : "") + " " + S.r}${S.dim}  ←/→${S.r}`), W));
+      : `  ${section === "people" ? S.inv + " People " + S.r : S.dim + " People " + S.r}${section === "topics" ? S.inv + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" : "") + " " + S.r : S.dim + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? S.y + " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" + S.dim : "") + " " + S.r}${section === "agents" ? S.inv + " Agents " + S.r : S.dim + " Agents " + S.r}${S.dim}  ←/→${S.r}`), W));
 
   const rows = [];
-  if (view === "list" && section === "topics") {
+  if (preview) {
+    rows.push(`${S.b}Send to ${preview.to.name}?${S.r} ${S.dim}${preview.note}${S.r}`, S.dim + "─".repeat(W) + S.r);
+    const body = preview.text.split("\n").flatMap((l) => { const o = []; for (let i = 0; i < Math.max(1, l.length); i += Math.max(10, W - 2)) o.push(" " + l.slice(i, i + Math.max(10, W - 2))); return o; });
+    const room = h - 3, shown = body.slice(0, room);
+    rows.push(...shown);
+    if (body.length > room) rows.push(S.dim + ` … ${body.length - room} more line(s) will also be sent` + S.r);
+    while (rows.length < h - 1) rows.push("");
+    rows.push(S.y + "Enter: send (encrypted, signed) · Esc: cancel" + S.r);
+  } else if (view === "list" && section === "agents") {
+    if (selAgent == null && agents.length) selAgent = agents[0].id;
+    const i = Math.max(0, agents.findIndex((a) => a.id === selAgent));
+    if (i < atop) atop = i; if (i >= atop + h) atop = i - h + 1;
+    atop = Math.max(0, Math.min(atop, Math.max(0, agents.length - h)));
+    if (!agents.length) rows.push(S.dim + " No agents running in other Herdr panes." + S.r);
+    const dot = { working: S.y + "◐", idle: S.dim + "○", done: S.g + "✓", blocked: E + "31m!" };
+    for (let j = 0; j < h && agents[atop + j]; j++) {
+      const a = agents[atop + j];
+      const l = fit(` ${dot[a.status] || S.dim + "·"}${S.r} ${a.workspace} ${S.dim}· ${a.agent} · ${a.status}${a.title ? " · " + a.title : ""}${S.r}`, W);
+      rows.push(a.id === selAgent ? S.inv + strip(l).padEnd(W).slice(0, W) + S.r : l);
+    }
+  } else if (view === "list" && section === "topics") {
     if (selTopic == null && topics.length) selTopic = topics[0].id;
     const i = Math.max(0, topics.findIndex((t) => t.id === selTopic));
     if (i < ttop) ttop = i; if (i >= ttop + h) ttop = i - h + 1;
@@ -170,14 +193,16 @@ function draw() {
     while (slice.length < h) slice.unshift("");
     rows.push(...slice);
   }
-  for (const r of rows) line(fit(r, W));
+  while (rows.length < h) rows.push("");
+  for (const r of rows.slice(0, h)) line(fit(r, W));
 
-  const hint = view === "list"
+  const hint = preview ? "Enter send · Esc cancel" : view === "list" && section === "agents" ? "↑↓ select · Enter/Tab share with a teammate · ←/→ sections"
+    : view === "list"
     ? "↑↓ select · Enter open · ←/→ people/discussions · Tab menu · /help"
     : "type to reply · wheel/PgUp scroll · Esc back · Tab menu";
   line(S.dim + "─".repeat(W) + S.r);
   line(fit(status ? S.y + status + S.r : updateNote ? S.g + "⬆ " + updateNote + S.r : S.dim + hint + S.r, W));
-  const dest = section === "topics" ? (selTopic != null ? S.c + "#" + (topics.find((t) => t.id === selTopic)?.title ?? "") : S.dim + "no topic") : (selName ? S.c + selName : S.dim + "nobody");
+  const dest = section === "agents" ? S.dim + "pick an agent, then Enter" : section === "topics" ? (selTopic != null ? S.c + "#" + (topics.find((t) => t.id === selTopic)?.title ?? "") : S.dim + "no topic") : (selName ? S.c + selName : S.dim + "nobody");
   const prompt = `${S.dim}${cfg.me} →${S.r} ${dest}${S.r} › `;
   buf += E + "2K" + prompt + input;
 
@@ -217,6 +242,7 @@ async function poll() {
         }
       }
     }
+    if (section === "agents" && !preview) refreshAgents();
     try { await pollTopics(); } catch (e) { if (!/not found|HTTP 404/.test(e.message)) throw e; }
     if (!registered && meNow && (!meNow.pubkey || !meNow.enc_pubkey) && (!meNow.pubkey || meNow.pubkey === signer.pubkey)) {
       registered = true;
@@ -339,6 +365,48 @@ function paneMenu() {
   flash(`Paste ${oneLine(last.from_name)}'s last message into which pane?`, 8000);
   draw();
 }
+function refreshAgents() {
+  try {
+    const wsName = {};
+    for (const w of herdr(["workspace", "list"]).result.workspaces) wsName[w.workspace_id] = w.label;
+    agents = listAgents(herdr(["pane", "list"]).result.panes, wsName);
+    if (selAgent != null && !agents.some((a) => a.id === selAgent)) selAgent = agents[0]?.id ?? null;
+  } catch (e) { status = "agents: " + e.message; }
+}
+function moveAgent(d) {
+  if (!agents.length) return;
+  selAgent = agents[Math.max(0, Math.min(agents.length - 1, agents.findIndex((a) => a.id === selAgent) + d))].id;
+}
+// Agent menu -> choose what to share -> choose a teammate -> read the preview -> Enter sends.
+function agentMenu(x, y) {
+  const a = agents.find((v) => v.id === selAgent);
+  if (!a) return flash("no agent selected");
+  const label = oneLine(`${a.workspace} · ${a.agent}`);
+  menu = { x, y, sel: 0, items: [
+    { label: `Share status of ${label}…`, run: () => peopleMenu(x, y, (to) => ({ to, text: agentCard(a), note: "status card, nothing from the terminal" })) },
+    { label: `Share recent output of ${label}…`, run: () => peopleMenu(x, y, (to) => {
+      let raw = "";
+      try { raw = String(herdr(["pane", "read", a.id, "--source", "recent", "--lines", "60", "--format", "text"])); } catch (e) { flash("cannot read pane: " + e.message); return null; }
+      const ex = outputExcerpt(raw);
+      if (!ex.text) { flash("that pane has no output yet"); return null; }
+      return { to, text: outputMessage(a, ex), note: `last lines of the terminal${ex.redacted ? ` · ${ex.redacted} possible secret(s) redacted` : ""}${ex.truncated ? " · shortened" : ""} · read it before sending` };
+    }) },
+    { label: "Cancel", run: () => {} },
+  ] };
+  draw();
+}
+function peopleMenu(x, y, build) {
+  const others = members.filter((m) => m.name !== cfg.me);
+  if (!others.length) return flash("nobody else in the community yet");
+  const items = others.slice(0, Math.max(3, (process.stdout.rows || 24) - 6)).map((m) => ({
+    label: `${m.online ? "●" : "○"} ${m.name}${encKeyOf(m) ? " 🔒" : " (no encryption key yet)"}`,
+    run: () => { const p = build(m); if (p) { preview = p; draw(); } },
+  }));
+  items.push({ label: "Cancel", run: () => {} });
+  menu = { x, y, items, sel: 0 };
+  flash("Share with whom?", 6000);
+  draw();
+}
 function confirmRemove(name) {
   menu = { x: 4, y: 4, items: [
     { label: `Really remove ${name}?`, run: () => {} },
@@ -348,12 +416,13 @@ function confirmRemove(name) {
   draw();
 }
 
-const help = "/who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /topics /people /topic <title> /private <title> | a, b /archive[ undo] /fp [name] /pull [pane] /quit";
+const help = "/agents /who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /topics /people /topic <title> /private <title> | a, b /archive[ undo] /fp [name] /pull [pane] /quit";
 async function command(t) {
   try {
     if (t === "/help") flash(help, 10000);
     else if (t === "/quit") quit();
     else if (t === "/who") { view = "list"; draw(); }
+    else if (t === "/agents") { section = "agents"; view = "list"; refreshAgents(); draw(); }
     else if (t.startsWith("/task ")) { await api(cfg, "PATCH", "/v1/me", { task: t.slice(6) }); await poll(); flash("task updated"); }
     else if (/^\/(rename|title|dept)\b/.test(t)) {
       const field = { rename: "name", title: "title", dept: "department" }[t.slice(1).split(/\s/)[0]];
@@ -432,7 +501,15 @@ async function command(t) {
     else flash("unknown command — /help");
   } catch (e) { flash(e.message); }
 }
+async function sendDM(to, body) {
+  const theirs = encKeyOf(to);
+  if (!theirs) { flash(`${to.name} has no verified encryption key yet (they must update the plugin and open it once) — nothing was sent`, 8000); return false; }
+  const env = sealDM(canonBody(body), cfg.id, dmTarget(to.id), [{ id: cfg.id, encPub: signer.encPub }, { id: to.id, encPub: theirs }]);
+  await api(cfg, "POST", "/v1/messages", { to: to.id, ...signMessage(signer, cfg.id, dmTarget(to.id), env) });
+  return true;
+}
 async function send(body) {
+  if (section === "agents") return flash("pick an agent and press Enter to share it with a teammate");
   try {
     if (section === "topics") {
       if (selTopic == null) return flash("open a discussion first (or /topic <title>)");
@@ -447,10 +524,7 @@ async function send(body) {
     } else {
       const to = members.find((m) => m.name === selName);
       if (!to || to.name === cfg.me) return flash("select someone else first");
-      const theirs = encKeyOf(to);
-      if (!theirs) return flash(`${to.name} has no verified encryption key yet (they must update the plugin and open it once) — nothing was sent`, 8000);
-      const env = sealDM(canonBody(body), cfg.id, dmTarget(to.id), [{ id: cfg.id, encPub: signer.encPub }, { id: to.id, encPub: theirs }]);
-      await api(cfg, "POST", "/v1/messages", { to: to.id, ...signMessage(signer, cfg.id, dmTarget(to.id), env) });
+      if (!(await sendDM(to, body))) return;
     }
     await poll(); cscroll = 0;
   } catch (e) { flash(e.message); }
@@ -464,6 +538,8 @@ function quit() {
 async function onKey(k) {
   if (k === "tab") { // keyboard way to the context menu
     if (menu) { menu = null; return draw(); }
+    if (preview) return;
+    if (section === "agents" && view === "list") return agentMenu(4, 3);
     const target = members.find((m) => m.name === selName);
     const rows = listRows(), idx = rows.findIndex((r) => r.m && r.m.name === selName);
     const H = process.stdout.rows || 24;
@@ -476,15 +552,28 @@ async function onKey(k) {
     else if (k === "enter") { const it = menu.items[menu.sel]; menu = null; draw(); await it.run(); return; }
     return draw();
   }
-  if ((k === "left" || k === "right") && view === "list" && !input) { section = section === "people" ? "topics" : "people"; }
-  else if (k === "up") { if (view === "list") (section === "topics" ? moveTopic(-1) : move(-1)); else cscroll++; }
-  else if (k === "down") { if (view === "list") (section === "topics" ? moveTopic(1) : move(1)); else cscroll = Math.max(0, cscroll - 1); }
+  if (preview) {
+    if (k === "esc") { preview = null; flash("cancelled, nothing was sent"); return; }
+    if (k === "enter") {
+      const p = preview; preview = null; draw();
+      try { if (await sendDM(p.to, p.text)) flash(`sent to ${p.to.name} 🔒`); } catch (e) { flash(e.message); }
+      return;
+    }
+    return draw();
+  }
+  const SECTIONS = ["people", "topics", "agents"];
+  if ((k === "left" || k === "right") && view === "list" && !input) {
+    section = SECTIONS[(SECTIONS.indexOf(section) + (k === "right" ? 1 : SECTIONS.length - 1)) % SECTIONS.length];
+    if (section === "agents") refreshAgents();
+  }
+  else if (k === "up") { if (view === "list") (section === "agents" ? moveAgent(-1) : section === "topics" ? moveTopic(-1) : move(-1)); else cscroll++; }
+  else if (k === "down") { if (view === "list") (section === "agents" ? moveAgent(1) : section === "topics" ? moveTopic(1) : move(1)); else cscroll = Math.max(0, cscroll - 1); }
   else if (k === "pgup") { if (view === "list") top -= 5; else cscroll += 5; }
   else if (k === "pgdn") { if (view === "list") top += 5; else cscroll -= 5; }
   else if (k === "esc") { if (input) input = ""; else view = "list"; }
   else if (k === "enter") {
     const t = input.trim(); input = "";
-    if (!t) { if (view === "list") { if (section === "topics") { if (selTopic != null) openTopic(selTopic); } else if (selName) openChat(selName); } }
+    if (!t) { if (view === "list") { if (section === "agents") agentMenu(4, 3); else if (section === "topics") { if (selTopic != null) openTopic(selTopic); } else if (selName) openChat(selName); } }
     else if (t.startsWith("/")) await command(t);
     else await send(t);
   }
@@ -506,6 +595,16 @@ async function onMouse(b, x, y, press) {
   if (b === 64) { if (view === "list") top -= 3; else cscroll += 3; return draw(); }
   if (b === 65) { if (view === "list") top += 3; else cscroll = Math.max(0, cscroll - 3); return draw(); }
   const inMain = y >= 2 && y < 2 + h;
+  if (preview) return;
+  if (section === "agents" && view === "list" && inMain) {
+    const a = agents[atop + (y - 2)];
+    if (a && (b === 0 || b === 2)) {
+      const dbl = selAgent === a.id && Date.now() - lastClick < 400; selAgent = a.id; lastClick = Date.now();
+      if ((b === 0 && dbl) || b === 2) return agentMenu(x, y);
+      return draw();
+    }
+    return;
+  }
   if (section === "topics" && view === "list" && inMain) {
     const t = topics[ttop + (y - 2)];
     if (t && (b === 0 || b === 2)) {
