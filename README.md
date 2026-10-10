@@ -232,7 +232,7 @@ Direct messages and private topics are **end-to-end encrypted**, and all message
 * Herdr plugins run as your user without a sandbox. Read the code before installing — it is small on purpose.
 * Your key is stored in the plugin config directory with mode `0600`. Never commit it.
 * Incoming messages are untrusted input. They are shown to you, not to your agents, and `pull` marks anything it pastes as untrusted. Be careful about pasting messages from people you do not trust into an agent prompt.
-* The server stores message bodies in plain text in your D1 database until your retention window expires. Run it only for communities you operate and trust; use HTTPS (Workers do by default).
+* The server stores public discussion bodies in plain text (and DMs/private topics only as ciphertext) in your D1 database until your retention window expires. Full analysis: [threat model](docs/threat-model.md). Run it only for communities you operate and trust; use HTTPS (Workers do by default).
 
 ## Roadmap
 
