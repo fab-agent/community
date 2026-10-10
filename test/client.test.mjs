@@ -77,3 +77,35 @@ test("private topic: members unwrap the topic key; outsiders and a swapped key f
   assert.equal(verifyBytes(a.pubkey, canon, sig), true);
   assert.equal(verifyBytes(a.pubkey, bundleCanonical("A", "title-env", { A: wa, B: JSON.stringify(wrapKey(b.encPub, newTopicKey(), "B")) }), sig), false);
 });
+
+import { redact, listAgents, agentCard, outputExcerpt, stripAnsi } from "../src/share.mjs";
+test("redact removes common secret shapes", () => {
+  const s = "key sk-abcdefghijklmnop1234 and Bearer abcdefghijklmnopqrstuv, token=hunter22 fck_abcdefghijk12 ghp_abcdefghijklmnopqrstuv";
+  const r = redact(s);
+  assert.ok(!/sk-abc|hunter22|fck_abc|ghp_abc|Bearer abc/.test(r.text));
+  assert.ok(r.count >= 5);
+  assert.equal(redact("just words, nothing secret").count, 0);
+  assert.ok(redact("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----").text.startsWith("[redacted]"));
+});
+test("agents: only agent panes, never Community panes", () => {
+  const ws = { w1: "infab", wE: "▣ fab-community" };
+  const panes = [
+    { pane_id: "w1:p1", agent: "claude", agent_status: "idle", terminal_title_stripped: "Fix\nthe bug", workspace_id: "w1" },
+    { pane_id: "w1:p2", workspace_id: "w1" },
+    { pane_id: "wE:p3", agent: "claude", workspace_id: "wE" },
+    { pane_id: "w1:p4", agent: "hermes", label: "Community", workspace_id: "w1" },
+  ];
+  const a = listAgents(panes, ws);
+  assert.deepEqual(a.map((x) => x.id), ["w1:p1"]);
+  assert.equal(a[0].title, "Fix the bug");
+  assert.match(agentCard(a[0]), /claude · idle · workspace "infab"\nFix the bug/);
+});
+test("output excerpt strips escapes and rules, redacts, caps length", () => {
+  const raw = "\x1b[31mhello\x1b[0m\n────────\nTOKEN=abcdef123456\n\n\n";
+  const e = outputExcerpt(raw);
+  assert.ok(!e.text.includes("\x1b") && !e.text.includes("───") && !e.text.includes("abcdef123456"));
+  assert.equal(e.redacted, 1);
+  const big = outputExcerpt("line\n".repeat(5000), { lines: 4000, max: 100 });
+  assert.equal(big.truncated, true); assert.ok(big.text.length <= 101);
+  assert.equal(stripAnsi("\x1b]0;title\x07x"), "x");
+});

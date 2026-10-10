@@ -3,7 +3,7 @@
 > Open-source (MIT) Herdr plugin plus a Cloudflare Worker/D1 server. A closed, admin-invited community layer: members, direct messages, discussions, private topics, signed messages and end-to-end encryption, all inside the terminal.
 
 Repo: https://github.com/fab-agent/community
-Install: `herdr plugin install fab-agent/community --ref v0.3.1`
+Install: `herdr plugin install fab-agent/community --ref v0.4.0`
 Requires: Herdr, Node 22+. Server: Cloudflare Workers + D1 (self-hosted).
 
 ## Docs

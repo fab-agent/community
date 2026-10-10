@@ -1,6 +1,6 @@
 # Threat model
 
-What Community protects, against whom, and what it does not. Written to be checked: each claim names the file that implements it. If a claim does not match the code, the code wins and this document is a bug. Version: v0.3.1.
+What Community protects, against whom, and what it does not. Written to be checked: each claim names the file that implements it. If a claim does not match the code, the code wins and this document is a bug. Version: v0.4.0.
 
 ## Parts and trust
 
@@ -34,6 +34,10 @@ What Community protects, against whom, and what it does not. Written to be check
 **D. A leaked personal API key.** Keys are stored as SHA-256 hashes on the server (`key_hash`), shown once at join. A leaked key lets an attacker act as that member towards the server (read public data, fetch ciphertext) but not sign messages or decrypt: those need the device's `signing.json`. Revoke the member and re-invite.
 
 **E. Malware or physical access on a member's machine.** Out of scope. `signing.json` (mode 0600) holds the Ed25519 and X25519 private keys unencrypted. `state/last.json` holds the decrypted text of the last pulled message.
+
+## Sharing an agent's output
+
+The Agents section can send a teammate the status or recent terminal output of one of your agents. This is the one feature where content from your machine is deliberately handed to another person, so: nothing is sent without a preview and an explicit Enter; text is stripped of escape codes and passed through a best-effort secret redaction (`src/share.mjs`); the message travels as an ordinary signed, end-to-end encrypted DM. Redaction is pattern based and will miss secrets it does not recognise, so the preview is the real control. Once sent, the recipient can copy it anywhere.
 
 ## Not protected
 

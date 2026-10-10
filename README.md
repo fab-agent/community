@@ -101,6 +101,15 @@ Herdr does not bind `Tab`, so it always reaches the community pane. If right-cli
 
 Unread messages show as a yellow `(n)` badge next to the sender or discussion and ring the terminal bell.
 
+### Agents
+
+The third section of the pane, next to People and Discussions (`←/→`, or `/agents`), lists the agents running in your other Herdr panes: workspace, agent, status (`◐` working, `○` idle, `✓` done) and title, like Herdr's own sidebar. Press `Enter` or `Tab` (or right-click) on one to share it with a teammate:
+
+* **Share status**: a one-line card (agent, status, workspace, title). No terminal content.
+* **Share recent output**: the last lines of that pane's terminal.
+
+Nothing is sent until you have read a **preview** and pressed `Enter` (`Esc` cancels). Output is stripped of escape codes and a best-effort pass redacts obvious secrets (API keys, bearer tokens, private keys, `token=` values and long random strings); the preview says how many were redacted. That pass is a safety net, not a guarantee, so read what you send. The message goes as a normal end-to-end encrypted, signed direct message, and the receiver sees it as ordinary text (and `/pull` still labels it untrusted). Community's own panes are never listed.
+
 ### Bring a message to your agent
 
 **Quickest way (no config):** type `/pull` in the community chat (or Tab → "Pull last message to a pane…"). A picker lists every pane in every workspace (`workspace · agent · title (pane-id)`); choose one with ↑/↓ + Enter. If you already know the pane id, skip the picker:
@@ -240,7 +249,7 @@ Direct messages and private topics are **end-to-end encrypted**, and all message
 
 ## Verifying a release
 
-Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.3.1.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
+Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.4.0.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
 
 ## Roadmap
 
