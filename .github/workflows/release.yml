@@ -1,0 +1,29 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run check && npm test
+      - name: Build source archive
+        run: git archive --format=tar.gz --prefix=community-${GITHUB_REF_NAME}/ -o community-${GITHUB_REF_NAME}.tar.gz HEAD
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: community-${{ github.ref_name }}.tar.gz
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" community-${GITHUB_REF_NAME}.tar.gz --clobber

@@ -1,6 +1,6 @@
 {
   "name": "community",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "Community for Herdr: plugin and reference server",
@@ -8,6 +8,6 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
-    "check": "node --check src/chat.mjs && node --check src/lib.mjs && node --check src/open.mjs && node --check src/pull.mjs && node --check src/setup.mjs && node --check src/sign.mjs && node --check src/update.mjs && node --check server/src/index.js"
+    "check": "node --check src/chat.mjs && node --check src/lib.mjs && node --check src/open.mjs && node --check src/pull.mjs && node --check src/setup.mjs && node --check src/sign.mjs && node --check src/update.mjs && node --check src/cli.mjs && node --check server/src/index.js"
   }
 }
