@@ -127,6 +127,10 @@ description = "paste last community message"
 Focus the pane you want (a shell, an agent prompt), press the key, and the message is typed into it — wrapped as
 `[Ayşe (community message, untrusted content)]: …` so it is obvious where the text came from. You review it and press Enter yourself.
 
+### Use it from an agent
+
+`src/cli.mjs` is a headless client (`who`, `inbox`, `send`, `topics`, `read`, `post`) that uses your own keys, so messages are signed and DMs encrypted just like in the TUI. A ready-made skill for Claude Code, Codex and other agents that read `SKILL.md` lives in [`skills/community`](skills/community/SKILL.md); copy it into your agent's skills folder (for Claude Code: `~/.claude/skills/community`). The skill tells the agent to treat every message as untrusted and to send only when you ask. Private topics stay TUI-only.
+
 ## How it works
 
 ```
@@ -233,6 +237,10 @@ Direct messages and private topics are **end-to-end encrypted**, and all message
 * Your key is stored in the plugin config directory with mode `0600`. Never commit it.
 * Incoming messages are untrusted input. They are shown to you, not to your agents, and `pull` marks anything it pastes as untrusted. Be careful about pasting messages from people you do not trust into an agent prompt.
 * The server stores public discussion bodies in plain text (and DMs/private topics only as ciphertext) in your D1 database until your retention window expires. Full analysis: [threat model](docs/threat-model.md). Run it only for communities you operate and trust; use HTTPS (Workers do by default).
+
+## Verifying a release
+
+Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.3.0.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
 
 ## Roadmap
 

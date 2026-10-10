@@ -19,7 +19,7 @@ What Community protects, against whom, and what it does not. Written to be check
 * Cannot forge a message in someone's name once that member's signing key is pinned by the reader: every message carries an Ed25519 signature over `community/v1\nfrom\ntarget\nts\nnonce\nbody` (`src/sign.mjs`). Readers verify locally.
 * Cannot substitute a recipient's encryption key: the key is vouched for by the member's signing key (`enc_sig`, `verifyEncKey`). Cannot swap a private topic's key bundle: the creator signs the bundle (`bundleCanonical`).
 * **Can** read public discussions, names, departments, titles, tasks, who talks to whom, when, and message sizes.
-* **Can** withhold, delay, drop or replay messages (availability, not integrity). The server rejects a repeated nonce (409), so a captured message cannot be re-posted by a third party; it does not enforce a timestamp window.
+* **Can** withhold, delay, drop or replay messages (availability, not integrity). The server rejects a repeated nonce (409), so a captured message cannot be re-posted by a third party; the server also rejects timestamps more than 10 minutes from its clock, so a stale capture cannot be injected later even if the nonce store were pruned.
 * **Can** lie at first contact: keys are trust-on-first-use. A malicious server can present a different signing key to a member you have never talked to. Defence: compare safety numbers with `/fp` over another channel.
 
 **B. A network attacker.** Workers terminate TLS. Beyond TLS, private content is already encrypted and every message is signed, so a passive or active attacker gains what adversary A gains from the wire, nothing more.
