@@ -1,6 +1,6 @@
 # Threat model
 
-What Community protects, against whom, and what it does not. Written to be checked: each claim names the file that implements it. If a claim does not match the code, the code wins and this document is a bug. Version: v0.3.0.
+What Community protects, against whom, and what it does not. Written to be checked: each claim names the file that implements it. If a claim does not match the code, the code wins and this document is a bug. Version: v0.3.1.
 
 ## Parts and trust
 
@@ -41,7 +41,7 @@ What Community protects, against whom, and what it does not. Written to be check
 * Public discussions: signed but readable by the server.
 * Forward secrecy and post-compromise security.
 * Key recovery: lose the device, lose old encrypted messages. An admin resets your key and you start fresh. One device per member.
-* The supply chain of the plugin itself: `herdr plugin install` runs unsandboxed code from the ref you install. Pin a tag (`--ref v0.3.0`) and read the code; it is small on purpose.
+* The supply chain of the plugin itself: `herdr plugin install` runs unsandboxed code from the ref you install. Pin a tag (`--ref v0.3.1`) and read the code; it is small on purpose.
 * Traffic analysis and deniability. Signatures are non-repudiable by design.
 
 ## Not examined

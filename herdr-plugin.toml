@@ -1,6 +1,6 @@
 id = "community"
 name = "Community"
-version = "0.3.0"
+version = "0.3.1"
 description = "Put your teammates next to your agents: members, departments, tasks and direct messages inside Herdr."
 min_herdr_version = "0.9.0"
 platforms = ["linux", "macos"]
