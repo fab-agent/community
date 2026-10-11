@@ -154,7 +154,7 @@ Herdr (your machine)                    Community server
 
 * The plugin is a plain Node script. It talks to Herdr through the CLI (`workspace create`, `plugin pane open`, `pane send-text`) and to the server over HTTPS. No Herdr internals, no native UI.
 * The server is ~150 lines in [`server/`](server). Each member has a personal key; only its SHA-256 hash is stored.
-* The client polls every 3 seconds, which also keeps your presence fresh.
+* The client polls every 3 seconds while you are active, backing off to 8 s and then 20 s when idle (any key or incoming message speeds it up again); polling also keeps your presence fresh.
 
 ## Run your own community server
 
