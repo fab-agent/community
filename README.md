@@ -58,7 +58,7 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
 | `/pull [pane-id]` | Paste the latest incoming message of the conversation you have open (a person or a discussion; from the list: the latest received anywhere) into another pane. No id → picker. Enter is **not** pressed |
-| `/help`, `/quit` | Help / leave (reopen with `community.open`) |
+| `/help`, `/quit` | Pickable command list (Enter runs or prefills) / leave (reopen with `community.open`) |
 
 ### Discussions
 

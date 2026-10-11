@@ -419,10 +419,28 @@ function confirmRemove(name) {
   draw();
 }
 
-const help = "/agents /who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /topics /people /topic <title> /private <title> | a, b /archive[ undo] /fp [name] /pull [pane] /quit";
+// /help opens a pickable list: commands that need no argument run right away, the rest prefill the input line.
+function helpMenu() {
+  const rows = [
+    ["/who", "list people", 0], ["/agents", "agents in other panes", 0], ["/topics", "discussions", 0], ["/people", "back to people", 0],
+    ["/to ", "/to <name> [msg]  message someone", 1], ["/task ", "/task <text>  set what you work on", 1],
+    ["/rename ", "/rename <new>  change your name", 1], ["/title ", "/title <t>  change your title", 1], ["/dept ", "/dept <d>  change your department", 1],
+    ["/topic ", "/topic <title>  new discussion", 1], ["/private ", "/private <title> | a, b  private topic", 1],
+    ["/archive", "archive this discussion", 0], ["/fp", "safety numbers", 0], ["/pull", "paste last message into a pane", 0],
+    ...(isAdmin() ? [["/invite Name | Department | Title", "/invite  create an invite (admin)", 1], ["/remove ", "/remove <name>  (admin)", 1]] : []),
+    ["/quit", "close", 0],
+  ];
+  const w = Math.max(...rows.map((r) => r[1].length));
+  menu = { x: 3, y: 2, sel: 0, items: rows.map(([cmd, label, fill]) => ({
+    label: fill ? label.padEnd(w) : (cmd + "  " + label).padEnd(w),
+    run: () => { if (fill) { input = cmd; draw(); } else return command(cmd); },
+  })) };
+  flash("Enter runs / fills the command · Esc closes", 8000);
+  draw();
+}
 async function command(t) {
   try {
-    if (t === "/help") flash(help, 10000);
+    if (t === "/help") helpMenu();
     else if (t === "/quit") quit();
     else if (t === "/who") { view = "list"; draw(); }
     else if (t === "/agents") { section = "agents"; view = "list"; refreshAgents(); draw(); }
