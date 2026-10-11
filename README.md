@@ -249,7 +249,7 @@ Direct messages and private topics are **end-to-end encrypted**, and all message
 
 ## Verifying a release
 
-Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.4.0.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
+Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.4.1.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
 
 ## Roadmap
 

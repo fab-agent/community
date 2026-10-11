@@ -1,6 +1,6 @@
 # Threat model
 
-What Community protects, against whom, and what it does not. Written to be checked: each claim names the file that implements it. If a claim does not match the code, the code wins and this document is a bug. Version: v0.4.0.
+What Community protects, against whom, and what it does not. Written to be checked: each claim names the file that implements it. If a claim does not match the code, the code wins and this document is a bug. Version: v0.4.1.
 
 ## Parts and trust
 
