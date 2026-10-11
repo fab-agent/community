@@ -58,7 +58,7 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
 | `/pull [pane-id]` | Paste the latest incoming message of the conversation you have open (a person or a discussion; from the list: the latest received anywhere) into another pane. No id → picker. Enter is **not** pressed |
-| `/help`, `/quit` | Help / leave (reopen with `community.open`) |
+| `/help`, `/quit` | Pickable command list (Enter runs or prefills) / leave (reopen with `community.open`) |
 
 ### Discussions
 
@@ -154,7 +154,7 @@ Herdr (your machine)                    Community server
 
 * The plugin is a plain Node script. It talks to Herdr through the CLI (`workspace create`, `plugin pane open`, `pane send-text`) and to the server over HTTPS. No Herdr internals, no native UI.
 * The server is ~150 lines in [`server/`](server). Each member has a personal key; only its SHA-256 hash is stored.
-* The client polls every 3 seconds, which also keeps your presence fresh.
+* The client polls every 3 seconds while you are active, backing off to 8 s and then 20 s when idle (any key or incoming message speeds it up again); polling also keeps your presence fresh.
 
 ## Run your own community server
 
@@ -249,7 +249,7 @@ Direct messages and private topics are **end-to-end encrypted**, and all message
 
 ## Verifying a release
 
-Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.4.0.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
+Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.4.1.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
 
 ## Roadmap
 

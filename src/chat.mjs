@@ -221,9 +221,10 @@ function draw() {
 const flash = (s, ms = 4000) => { status = s; draw(); setTimeout(() => { if (status === s) { status = ""; draw(); } }, ms); };
 const bell = () => out("\x07");
 
-async function poll() {
+async function poll(timer = false) {
   try {
-    members = (await api(cfg, "GET", "/v1/members")).map((m) => ({ ...m, name: clean(m.name), title: clean(m.title), department: clean(m.department), task: clean(m.task) }));
+    // The roster rarely changes, so timer ticks refresh it every 3rd time; actions and the first load always do.
+    if (!timer || firstPoll || ++rosterTick % 3 === 0) members = (await api(cfg, "GET", "/v1/members")).map((m) => ({ ...m, name: clean(m.name), title: clean(m.title), department: clean(m.department), task: clean(m.task) }));
     const sig = members.map((m) => m.id + m.name).join();
     if (lastSig !== null && sig !== lastSig) { msgs = []; since = 0; } // someone was renamed or removed: reload names
     lastSig = sig;
@@ -233,6 +234,7 @@ async function poll() {
     const fresh = await api(cfg, "GET", `/v1/messages?since=${since}`);
     for (const m of fresh) {
       since = Math.max(since, m.id);
+      if (!firstPoll) lastActive = Date.now();
       msgs.push(decorateDM(m));
       if (m.from_name !== cfg.me) {
         if (!(view === "chat" && selName === m.from_name)) unread[m.from_name] = (unread[m.from_name] || 0) + 1;
@@ -257,7 +259,7 @@ async function poll() {
   } catch (e) { status = "connection: " + e.message; }
   draw();
 }
-let firstPoll = true, lastSig = null, registered = false, warnedKey = false, pinsSaved = JSON.stringify(pins);
+let rosterTick = 0, firstPoll = true, lastSig = null, registered = false, warnedKey = false, pinsSaved = JSON.stringify(pins);
 // Verify a private topic before trusting it: the creator's signature must cover the title and every member's
 // key wrap (so the server cannot hand us a topic key it knows), and our own wrap must match the signed hash.
 const privOk = {};
@@ -287,6 +289,7 @@ async function pollTopics() {
     const list = (tmsgs[t.id] ||= []);
     for (const m of fresh) {
       tsince[t.id] = Math.max(tsince[t.id] ?? 0, m.id);
+      if (!firstPoll) lastActive = Date.now();
       list.push(decorateTopicMsg(m, t.id));
       if (m.from_name !== cfg.me && !firstPoll) {
         const mm = list[list.length - 1];
@@ -416,10 +419,28 @@ function confirmRemove(name) {
   draw();
 }
 
-const help = "/agents /who /to <name> [msg] /task <text> /rename <new> /title <t> /dept <d> (admins: <name> | <value>) /invite <name> | <dept> | <title> [| admin] /remove <name> /topics /people /topic <title> /private <title> | a, b /archive[ undo] /fp [name] /pull [pane] /quit";
+// /help opens a pickable list: commands that need no argument run right away, the rest prefill the input line.
+function helpMenu() {
+  const rows = [
+    ["/who", "list people", 0], ["/agents", "agents in other panes", 0], ["/topics", "discussions", 0], ["/people", "back to people", 0],
+    ["/to ", "/to <name> [msg]  message someone", 1], ["/task ", "/task <text>  set what you work on", 1],
+    ["/rename ", "/rename <new>  change your name", 1], ["/title ", "/title <t>  change your title", 1], ["/dept ", "/dept <d>  change your department", 1],
+    ["/topic ", "/topic <title>  new discussion", 1], ["/private ", "/private <title> | a, b  private topic", 1],
+    ["/archive", "archive this discussion", 0], ["/fp", "safety numbers", 0], ["/pull", "paste last message into a pane", 0],
+    ...(isAdmin() ? [["/invite Name | Department | Title", "/invite  create an invite (admin)", 1], ["/remove ", "/remove <name>  (admin)", 1]] : []),
+    ["/quit", "close", 0],
+  ];
+  const w = Math.max(...rows.map((r) => r[1].length));
+  menu = { x: 3, y: 2, sel: 0, items: rows.map(([cmd, label, fill]) => ({
+    label: fill ? label.padEnd(w) : (cmd + "  " + label).padEnd(w),
+    run: () => { if (fill) { input = cmd; draw(); } else return command(cmd); },
+  })) };
+  flash("Enter runs / fills the command · Esc closes", 8000);
+  draw();
+}
 async function command(t) {
   try {
-    if (t === "/help") flash(help, 10000);
+    if (t === "/help") helpMenu();
     else if (t === "/quit") quit();
     else if (t === "/who") { view = "list"; draw(); }
     else if (t === "/agents") { section = "agents"; view = "list"; refreshAgents(); draw(); }
@@ -649,5 +670,11 @@ process.on("exit", () => out(E + "?1000l" + E + "?1006l"));
 
 if (!cfg.id) { try { const me = await api(cfg, "GET", "/v1/me"); cfg.id = me.id; cfg.me = me.name; saveConfig(cfg); } catch {} }
 out(E + "?1049h" + E + "?1000h" + E + "?1006h");
+// Adaptive polling: fast while you are active, slower when idle (keeps request volume low on free Worker plans).
+// Idle cap stays under the server's 30s presence-write throttle + 90s "online" window.
+let lastActive = Date.now();
+const nextDelay = () => { const idle = Date.now() - lastActive; return idle < 20_000 ? 3000 : idle < 120_000 ? 8000 : 20_000; };
+const schedule = () => setTimeout(async () => { await poll(true); schedule(); }, nextDelay());
+process.stdin.on("data", () => { lastActive = Date.now(); });
 await poll();
-setInterval(poll, 3000);
+schedule();
