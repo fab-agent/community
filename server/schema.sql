@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS members (
   enc_sig TEXT,
   kind TEXT NOT NULL DEFAULT 'human',
   policy TEXT NOT NULL DEFAULT '',
+  owner_id TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS messages (

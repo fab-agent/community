@@ -26,7 +26,8 @@ const bearer = (req) => (req.headers.get("authorization") || "").replace(/^Beare
 const pub = (m) => ({
   id: m.id, role: m.role || "member", kind: m.kind || "human", name: m.name, department: m.department, title: m.title, task: m.task,
   pubkey: m.pubkey || null, enc_pubkey: m.enc_pubkey || null, enc_sig: m.enc_sig || null,
-  last_seen: m.last_seen, online: Date.now() - m.last_seen < 90_000,
+  last_seen: m.kind === "server_agent" ? 0 : m.last_seen, online: m.kind === "server_agent" ? null : Date.now() - m.last_seen < 90_000, // servers have no presence
+  owner_id: m.owner_id || null,
 });
 // Strip control characters (incl. ESC, so no terminal escape sequences reach other members' screens).
 const clip = (v, n) => String(v ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").slice(0, n);
@@ -173,8 +174,10 @@ export default {
       await env.DB.prepare("UPDATE members SET name=name||' ['||substr(id,1,6)||']' WHERE name=? AND revoked=1").bind(inv.name).run();
       try {
         await env.DB.prepare(
-          "INSERT INTO members (id,name,department,title,role,kind,policy,key_hash,pubkey,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
-        ).bind(id, inv.name, inv.department, inv.title, inv.role, inv.kind, inv.policy, await sha256(key), pubkey, now).run();
+          "INSERT INTO members (id,name,department,title,role,kind,policy,owner_id,key_hash,pubkey,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        ).bind(id, inv.name, inv.department, inv.title, inv.role, inv.kind, inv.policy,
+          // whoever invites a server is responsible for it (root invites have no owner)
+          inv.kind === "server_agent" && inv.created_by !== "root" ? inv.created_by : null, await sha256(key), pubkey, now).run();
       } catch {
         await env.DB.prepare("UPDATE invites SET used_at=NULL WHERE code_hash=?").bind(ch).run();
         return err(409, "name already exists");
@@ -241,7 +244,8 @@ export default {
       }
       if (path === "/v1/admin/members" && req.method === "GET") {
         const { results } = await env.DB.prepare("SELECT * FROM members ORDER BY name").all();
-        return json(results.map((m) => ({ ...pub(m), revoked: !!m.revoked })));
+        const names = Object.fromEntries(results.map((m) => [m.id, m.name]));
+        return json(results.map((m) => ({ ...pub(m), revoked: !!m.revoked, owner: m.owner_id ? names[m.owner_id] ?? null : null })));
       }
       const role = path.match(/^\/v1\/admin\/members\/([^/]+)\/role$/);
       if (role && req.method === "POST") {
@@ -266,6 +270,14 @@ export default {
         if (actor && (target.role === "admin" || target.id === actor.id)) return err(403, "admins can only be revoked with the root ADMIN_KEY");
         await env.DB.prepare("UPDATE members SET revoked=1 WHERE id=?").bind(target.id).run();
         return json({ ok: true });
+      }
+      const om = path.match(/^\/v1\/admin\/members\/([^/]+)\/owner$/);
+      if (om && req.method === "POST") { // reassign who is responsible for a server agent (e.g. one invited with the root key)
+        const b = await req.json().catch(() => ({}));
+        const owner = await env.DB.prepare("SELECT id,name FROM members WHERE (id=? OR name=?) AND revoked=0").bind(b.owner, b.owner).first();
+        if (!owner) return err(404, "owner not found");
+        const x = await env.DB.prepare("UPDATE members SET owner_id=? WHERE (id=? OR name=?) AND kind='server_agent'").bind(owner.id, om[1], decodeURIComponent(om[1])).run();
+        return x.meta.changes ? json({ ok: true, owner: owner.name }) : err(404, "server agent not found");
       }
       const pm = path.match(/^\/v1\/admin\/members\/([^/]+)\/policy$/);
       if (pm && req.method === "POST") { // only server agents carry a policy
@@ -295,7 +307,8 @@ export default {
     const me = await env.DB.prepare("SELECT * FROM members WHERE key_hash=? AND revoked=0").bind(await sha256(k)).first();
     if (!me) return err(401, "invalid key");
     // Throttled: polling every few seconds must not become a D1 write per request.
-    if (now - me.last_seen > 30_000) {
+    // Server agents have no presence, so they cost no D1 write here.
+    if (me.kind !== "server_agent" && now - me.last_seen > 30_000) {
       await env.DB.prepare("UPDATE members SET last_seen=? WHERE id=?").bind(now, me.id).run();
       me.last_seen = now;
     }
@@ -308,7 +321,8 @@ export default {
     }
     if (path === "/v1/members" && req.method === "GET") {
       const { results } = await env.DB.prepare("SELECT * FROM members WHERE revoked=0 ORDER BY department,name").all();
-      return json(results.map(pub));
+      const names = Object.fromEntries(results.map((m) => [m.id, m.name]));
+      return json(results.map((m) => ({ ...pub(m), owner: m.owner_id ? names[m.owner_id] ?? null : null })));
     }
     if (path === "/v1/me/key" && req.method === "POST") { // register the device's signing key once
       const b = await req.json().catch(() => ({}));

@@ -148,7 +148,7 @@ Herdr 0.9 can show several SSH machines in one TUI (`herdr machine add`). Commun
 
 ### What a Server Agent is
 
-* One member per server (kind `server_agent`), invited by an admin like anyone else. Never an admin; it cannot invite, change roles or open topics.
+* One member per server (kind `server_agent`), invited by an admin like anyone else. The admin who invites it is responsible for it, and the TUI lists it under that person in a "Servers" section. Servers have no online/offline state. Never an admin; it cannot invite, change roles or open topics.
 * The agents working on that server are **not** members. They all speak as the server, and can add a `--via <name>` label so people see which one wrote. The label is declared by the caller, so treat it as a hint, not proof. The machine label (`--at`) is fixed by the server's setup.
 * The server's policy is enforced by the Worker, so it holds even if the agent's key leaks: allowed recipients (default: admins only), a rate limit (default 20 messages per 10 minutes), a message size cap, no private topics. Admins can change it per agent.
 

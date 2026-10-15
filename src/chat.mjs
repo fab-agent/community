@@ -55,20 +55,28 @@ const isAdmin = () => meRec()?.role === "admin";
 
 // ---------- rows ----------
 function listRows() {
-  const by = {};
-  for (const m of members) (by[m.department || "—"] ||= []).push(m);
+  const by = {}, servers = {};
+  for (const m of members) {
+    if (m.kind === "server_agent") (servers[m.owner || ""] ||= []).push(m); // servers sit under the person responsible for them
+    else (by[m.department || "—"] ||= []).push(m);
+  }
   const rows = [];
   for (const [d, ms] of Object.entries(by)) {
     rows.push({ head: d });
     for (const m of ms) rows.push({ m });
   }
+  for (const [owner, ms] of Object.entries(servers)) {
+    rows.push({ head: owner ? `Servers · ${owner}` : "Servers" });
+    for (const m of ms) rows.push({ m });
+  }
   return rows;
 }
 function memberLine(m, selected, w) {
-  const dot = m.online ? S.g + "●" + S.r : S.dim + "○" + S.r;
+  // Servers have no presence (nobody sits at them), so no online dot.
+  const dot = m.kind === "server_agent" ? S.dim + "⚙" + S.r : m.online ? S.g + "●" + S.r : S.dim + "○" + S.r;
   const badge = unread[m.name] ? S.y + ` (${unread[m.name]})` + S.r : "";
   const line = ` ${dot} ${m.name}${m.role === "admin" ? " ★" : ""}${m.name === cfg.me ? " (you)" : ""}${badge}` +
-    (m.title ? S.dim + " · " + m.title + S.r : "") + (m.task ? S.y + " — " + m.task + S.r : "");
+    (m.kind === "server_agent" ? S.dim + " · server" + S.r : m.title ? S.dim + " · " + m.title + S.r : "") + (m.task ? S.y + " — " + m.task + S.r : "");
   const f = fit(line, w);
   return selected ? S.inv + strip(f).padEnd(w).slice(0, w) + S.r : f;
 }
@@ -106,6 +114,11 @@ function mark(m, target) {
   }
   return MARKS[m._v] + S.r;
 }
+// Signed but self-declared labels (which sub-agent, from which machine): a hint, never proof.
+const labelOf = (m) => {
+  const via = oneLine(clean(m.via ?? "")), at = oneLine(clean(m.at ?? ""));
+  return via || at ? S.dim + ` [${via}${via && at ? " @ " : ""}${at}]` + S.r : "";
+};
 function chatLines(w, list, targetOf) {
   const lines = [];
   let lastDay = null;
@@ -116,7 +129,7 @@ function chatLines(w, list, targetOf) {
       lines.push(S.dim + "─".repeat(2) + label + "─".repeat(Math.max(0, w - label.length - 2)) + S.r);
     }
     const mine = m.from_name === cfg.me;
-    const head = `${S.dim}${hhmm(m.created_at)}${S.r} ${mark(m, targetOf(m))}${m.enc ? "🔒" : " "}${mine ? S.c + "you" : S.g + m.from_name}${S.r}: `;
+    const head = `${S.dim}${hhmm(m.created_at)}${S.r} ${mark(m, targetOf(m))}${m.enc ? "🔒" : " "}${mine ? S.c + "you" : S.g + m.from_name}${S.r}${labelOf(m)}: `;
     const pad = " ".repeat(strip(head).length);
     const body = m.body.split("\n");
     let first = true;
@@ -224,7 +237,7 @@ const bell = () => out("\x07");
 async function poll(timer = false) {
   try {
     // The roster rarely changes, so timer ticks refresh it every 3rd time; actions and the first load always do.
-    if (!timer || firstPoll || ++rosterTick % 3 === 0) members = (await api(cfg, "GET", "/v1/members")).map((m) => ({ ...m, name: clean(m.name), title: clean(m.title), department: clean(m.department), task: clean(m.task) }));
+    if (!timer || firstPoll || ++rosterTick % 3 === 0) members = (await api(cfg, "GET", "/v1/members")).map((m) => ({ ...m, name: clean(m.name), title: clean(m.title), department: clean(m.department), task: clean(m.task), owner: m.owner ? clean(m.owner) : null }));
     const sig = members.map((m) => m.id + m.name).join();
     if (lastSig !== null && sig !== lastSig) { msgs = []; since = 0; } // someone was renamed or removed: reload names
     lastSig = sig;
@@ -402,7 +415,7 @@ function peopleMenu(x, y, build) {
   const others = members.filter((m) => m.name !== cfg.me);
   if (!others.length) return flash("nobody else in the community yet");
   const items = others.slice(0, Math.max(3, (process.stdout.rows || 24) - 6)).map((m) => ({
-    label: `${m.online ? "●" : "○"} ${m.name}${encKeyOf(m) ? " 🔒" : " (no encryption key yet)"}`,
+    label: `${m.kind === "server_agent" ? "⚙" : m.online ? "●" : "○"} ${m.name}${encKeyOf(m) ? " 🔒" : " (no encryption key yet)"}`,
     run: () => { const p = build(m); if (p) { preview = p; draw(); } },
   }));
   items.push({ label: "Cancel", run: () => {} });

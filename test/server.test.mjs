@@ -352,3 +352,31 @@ test("signed via/at labels: stored, returned, bound to the signature", async () 
   assert.equal(plain.via, undefined);
   assert.equal((await call(env, "POST", "/v1/messages", { key: ag.key, body: { to: "Boss", ...plain } })).status, 201);
 });
+
+test("server agents: no presence, no last_seen writes; the inviting admin is the owner", async () => {
+  const env = mk();
+  const boss = await addMember(env, "Boss", "admin"), ada = await addMember(env, "Ada");
+  const inv = await call(env, "POST", "/v1/admin/invites", { key: boss.key, body: { name: "Srv1", kind: "server_agent" } });
+  assert.equal(inv.status, 201);
+  const s = signer();
+  const j = await call(env, "POST", "/v1/join", { body: { code: inv.json.code, pubkey: s.pubkey } });
+  await call(env, "GET", "/v1/members", { key: j.json.key }); // an authenticated request
+  const list = (await call(env, "GET", "/v1/members", { key: ada.key })).json;
+  const srv = list.find((m) => m.name === "Srv1");
+  assert.equal(srv.kind, "server_agent");
+  assert.equal(srv.owner, "Boss");
+  assert.equal(srv.online, null);
+  assert.equal(srv.last_seen, 0);
+  assert.equal(list.find((m) => m.name === "Ada").owner, null);
+  assert.equal(env.DB.raw.prepare("SELECT last_seen FROM members WHERE name='Srv1'").get().last_seen, 0); // no D1 write
+  // humans keep presence
+  assert.equal(typeof list.find((m) => m.name === "Ada").online, "boolean");
+  // a root-invited server has no owner until an admin assigns one
+  env.DB.raw.exec("UPDATE invites SET created_at = 1");
+  const inv2 = await call(env, "POST", "/v1/admin/invites", { key: ADMIN, body: { name: "Srv2", kind: "server_agent" } });
+  await call(env, "POST", "/v1/join", { body: { code: inv2.json.code } });
+  assert.equal((await call(env, "GET", "/v1/members", { key: ada.key })).json.find((m) => m.name === "Srv2").owner, null);
+  assert.equal((await call(env, "POST", "/v1/admin/members/Srv2/owner", { key: ADMIN, body: { owner: "Boss" } })).json.owner, "Boss");
+  assert.equal((await call(env, "POST", "/v1/admin/members/Ada/owner", { key: ADMIN, body: { owner: "Boss" } })).status, 404); // humans have no owner
+  assert.equal((await call(env, "GET", "/v1/members", { key: ada.key })).json.find((m) => m.name === "Srv2").owner, "Boss");
+});

@@ -38,14 +38,9 @@ test("broker: policy, redaction, machine label, caller label cannot be overridde
     await cli(adir, "join", url, inv.code);
     fs.writeFileSync(adir + "/broker.json", JSON.stringify({ at: "vps-1", recipients: ["Boss"], rate: { max: 3, window_s: 600 }, max_body: 200 }));
     const sock = fs.mkdtempSync(os.tmpdir() + "/sock") + "/b.sock";
-    env.DB.raw.exec("UPDATE members SET last_seen = 0"); // only the broker heartbeat can make Srv1 online now
     broker = spawn("node", ["src/broker.mjs", "--config-dir", adir, "--socket", sock], { env: { PATH: process.env.PATH, HOME: adir }, stdio: "ignore" });
     for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
     assert.equal(fs.statSync(sock).mode & 0o777, 0o660);
-
-    for (let i = 0; i < 40; i++) { if (env.DB.raw.prepare("SELECT last_seen FROM members WHERE name=?").get("Srv1").last_seen > 0) break; await new Promise((r) => setTimeout(r, 50)); }
-    const listing = await (await fetch(url + "/v1/admin/members", { headers: { authorization: `Bearer ${ADMIN}` } })).json();
-    assert.equal(listing.find((m) => m.name === "Srv1").online, true); // the broker's heartbeat
 
     const r1 = await ask(sock, { cmd: "send", to: "Boss", text: "deploy done --via evil --at elsewhere", via: "deploy-bot" });
     assert.equal(r1.ok, true, JSON.stringify(r1));

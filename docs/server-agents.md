@@ -30,12 +30,18 @@ Both labels are **assertions by the signer, not proofs**. A signature proves the
 
 People section: a member's current location is shown only if the member opted in.
 
+## Ownership and presence
+
+- **The admin who invites a Server Agent is responsible for it.** The invite records its creator and the Worker stores it as the member's `owner_id` when the invite is redeemed (an invite made with the root key has no owner until an admin assigns one with `POST /v1/admin/members/<name>/owner`). The TUI lists servers in a "Servers" section under their owner.
+- **Servers have no presence.** Nobody sits at a server, so there is no online/offline state: the Worker returns `online: null` and does not write `last_seen` for Server Agents (no D1 write per request), and the TUI shows no dot.
+
 ## Server-side policy (enforced by the Worker, not by clients)
 
 Anything enforced only in the client or the CLI can be bypassed by calling the API directly. These apply even if a Server Agent key is stolen:
 
 | Policy | Default for `server_agent` |
 |---|---|
+| Presence | none (`online: null`, no `last_seen` writes) |
 | Kind and role | `server_agent`, no admin, cannot invite, cannot change roles |
 | Send rate | per-member sliding window (e.g. 20 messages / 10 min), configurable per member |
 | Recipients | allowlist of member names or "admins only"; others rejected |

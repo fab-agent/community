@@ -70,13 +70,6 @@ const server = net.createServer((sock) => {
   });
   sock.on("error", () => {});
 });
-// Presence: the broker is the server's heartbeat, so the member shows as online while the service runs
-// (the Worker marks a member online for 90 s after its last authenticated request).
-try {
-  const c = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
-  const beat = () => fetch(c.url.replace(/\/$/, "") + "/v1/me", { headers: { authorization: `Bearer ${c.key}` } }).catch(() => {});
-  beat(); setInterval(beat, 45_000).unref();
-} catch {}
 fs.mkdirSync(path.dirname(socketPath), { recursive: true });
 try { fs.unlinkSync(socketPath); } catch {}
 server.listen(socketPath, () => { fs.chmodSync(socketPath, 0o660); console.error(`community-broker listening on ${socketPath}`); });
