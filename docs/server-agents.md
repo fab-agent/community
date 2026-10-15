@@ -21,8 +21,8 @@ Herdr 0.9 can show several SSH machines in one TUI (`herdr machine add`). A pers
 
 Every message already carries a signed body (`community/v1\nfrom\ntarget\nts\nnonce\nbody`). Two optional, signed labels are added to the body envelope (stored outside the encrypted payload so the server can apply policy; both are clipped and stripped of control characters):
 
-- `via`: which sub-agent asked the broker to send (name and, where known, the herdr pane). Set by the broker from the caller's local socket credentials, not by the sub-agent's text.
-- `at` (location): the machine the sender was working on. For humans it is the saved machine of the focused workspace, read on the client. For Server Agents it is the server's own label.
+- `via`: which sub-agent asked the broker to send. **Declared by the caller** in its request to the broker (Node cannot read `SO_PEERCRED`, so the broker cannot verify it). The broker puts it in argv before any message text, so text cannot override it.
+- `at` (location): the machine the sender was working on. For humans it is the saved machine of the focused workspace, read on the client. For Server Agents it is the server's own label, set by the broker from its config (callers cannot change it).
 
 Wire format: when `via` or `at` is present, the signature covers `community/v2\nfrom\ntarget\nts\nnonce\nvia\nat\nbody`; without labels the original `community/v1` text is used, so existing clients and messages keep verifying.
 
@@ -51,8 +51,8 @@ Schema: migration `0005` adds `members.kind`, `members.policy` (JSON: rate, reci
 
 - Holds the Server Agent key. Listens on a unix socket.
 - **Separation is only real if the key is owned by a different OS user than the agents.** The install script creates a dedicated user (e.g. `community-broker`), stores the config and key there with mode 0600, and creates a socket group that agent processes join. If an operator runs the broker as the same user as the agents, the broker still gives policy and labels but **not** key secrecy; the install script says so.
-- Reads the caller's identity from `SO_PEERCRED` (uid/pid) for the `via` label and per-caller limits.
-- Local policy before sending: recipient allowlist, rate limit, redaction pass (the existing `share.mjs` rules, stricter by default on servers), optional human-approval hook for sensitive recipients. The Worker's policy is the backstop.
+- Local policy before sending: optional recipient allowlist, sliding-window rate limit, size cap, and the `share.mjs` redaction pass. The Worker's policy is the backstop. A human-approval hook for sensitive recipients is not implemented in v0.5.
+- Socket mode 0660, owned by the `community-agents` group; only members of that group can reach it. Protocol: one JSON request per connection (`send`, `post`, `inbox`, `who`, `topics`, `read`); `exec`-style commands do not exist.
 - API: send DM, post to topic, read inbox (returns untrusted-labelled text). The inbox is never injected into agent prompts automatically.
 
 ## Headless install without the plugin
@@ -79,7 +79,7 @@ Schema: migration `0005` adds `members.kind`, `members.policy` (JSON: rate, reci
 - Stolen Server Agent key: attacker is limited by server policy and can be revoked in one call; cannot impersonate a human.
 - Compromised sub-agent with no key access (separate OS user): can only use the broker, bounded by its rate limit and allowlist.
 - Compromised sub-agent when broker and agents share a user: can read the key; only server policy limits it.
-- Labels can lie. A compromised sub-agent can claim any `via` unless the broker sets it from peer credentials, which is why the broker does.
+- Labels can lie. A compromised sub-agent can claim any `via`; only `at` is fixed by the broker. Receivers must treat both as hints.
 - Prompt injection: inbox text stays untrusted and is never auto-delivered to agents.
 
 ## Open questions
