@@ -47,9 +47,15 @@ export function listAgents(panes, wsName, machine = null) {
 }
 const oneLine = (s) => clean(s).replace(/\s+/g, " ").trim();
 
+// What leaves this machine about a remote source: workspace name goes through the strict pass, and a machine label
+// that looks like a host name or address is replaced. Local sources are unchanged.
+const looksLikeHost = (l) => /[.:]/.test(l) || redact(l, { strict: true }).count > 0;
+export const safeMachine = (label) => (looksLikeHost(String(label)) ? "remote" : String(label));
+const safeWorkspace = (a) => (a.machine ? redact(a.workspace, { strict: true }).text : a.workspace);
+
 export const agentCard = (a) => {
   const t = redact(a.title, { strict: !!a.machine });
-  return `🤖 ${a.agent} · ${a.status} · ${a.machine ? `machine "${a.machine}" · ` : ""}workspace "${a.workspace}"` + (t.text ? `\n${t.text}` : "");
+  return `🤖 ${a.agent} · ${a.status} · ${a.machine ? `machine "${safeMachine(a.machine)}" · ` : ""}workspace "${safeWorkspace(a)}"` + (t.text ? `\n${t.text}` : "");
 };
 
 // Machines you may share from: saved, enabled, and opted in by name in config (`share_machines`). Off by default.
@@ -93,4 +99,4 @@ export function outputExcerpt(raw, { lines = 40, max = 3000, strict = false } = 
   if (cut) text = "…" + text.slice(-max);
   return { text, redacted: r.count, truncated: cut };
 }
-export const outputMessage = (a, ex) => `🤖 output of ${a.agent} (${a.machine ? `machine "${a.machine}", ` : ""}workspace "${a.workspace}", ${a.status}), shared by hand and cleaned of obvious secrets:\n${ex.text}`;
+export const outputMessage = (a, ex) => `🤖 output of ${a.agent} (${a.machine ? `machine "${safeMachine(a.machine)}", ` : ""}workspace "${safeWorkspace(a)}", ${a.status}), shared by hand and cleaned of obvious secrets:\n${ex.text}`;

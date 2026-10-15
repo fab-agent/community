@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { redact, listAgents, agentCard, planMachines, agentRows, pullTarget, outputExcerpt, outputMessage } from "../src/share.mjs";
+import { safeMachine, redact, listAgents, agentCard, planMachines, agentRows, pullTarget, outputExcerpt, outputMessage } from "../src/share.mjs";
 
 test("strict redaction removes addresses, hosts, urls and home paths; normal pass keeps them", () => {
   const t = "ada@example.com 10.1.2.3 db1.corp.internal https://h.example/x?a=1 /home/ada/app";
@@ -43,4 +43,23 @@ test("/pull refuses remote machines and panes that are not local", () => {
   assert.equal(pullTarget("build-box", ids, ["build-box"]).ok, false);
   assert.equal(pullTarget("w9:p9", ids, []).ok, false);
   assert.equal(pullTarget("", ids, []).ok, false);
+});
+
+test("remote cards and output messages redact the workspace name and host-like machine labels; local is unchanged", () => {
+  const pane = { pane_id: "p", workspace_id: "w", agent: "claude", agent_status: "idle", terminal_title_stripped: "t" };
+  const ws = { w: "deploy ada@example.com /home/ada" };
+  const remote = listAgents([pane], ws, "10.1.2.3")[0];
+  const local = listAgents([pane], ws)[0];
+  const ex = { text: "ok", redacted: 0, truncated: false };
+  for (const msg of [agentCard(remote), outputMessage(remote, ex)]) {
+    assert.ok(!/ada@|\/home\/ada|10\.1\.2\.3/.test(msg), msg);
+    assert.match(msg, /machine "remote"/);
+  }
+  for (const msg of [agentCard(local), outputMessage(local, ex)]) {
+    assert.match(msg, /workspace "deploy ada@example\.com \/home\/ada"/); // local output is untouched
+    assert.ok(!/machine/.test(msg));
+  }
+  assert.equal(safeMachine("build-box"), "build-box");
+  assert.equal(safeMachine("build.corp.internal"), "remote");
+  assert.equal(safeMachine("10.0.0.1"), "remote");
 });

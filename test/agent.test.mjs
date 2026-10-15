@@ -10,6 +10,7 @@ import { loadOrCreateSigner, signEncKey } from "../src/sign.mjs";
 
 const ADMIN = "root-admin-key";
 const sh = (file, args, env) => new Promise((res, rej) => execFile(file, args, { env: { PATH: process.env.PATH, ...env } }, (e, so, se) => e ? rej(new Error(`${file} ${args.slice(0, 3).join(" ")}: ${se || e.message}`)) : res(so)));
+const shErrOut = (file, args, env) => new Promise((res, rej) => execFile(file, args, { env: { PATH: process.env.PATH, ...env } }, (e, so, se) => e ? rej(e) : res({ so, se })));
 const boot = async () => {
   const env = { DB: makeDb(), ADMIN_KEY: ADMIN, COMMUNITY_NAME: "t" };
   const srv = http.createServer(async (rq, rs) => {
@@ -34,8 +35,9 @@ test("light install: installer joins as server agent, `community` sends signed l
   const { srv, url, invite, inbox } = await boot();
   try {
     const home = fs.mkdtempSync(os.tmpdir() + "/home");
-    const out = await sh("bash", ["scripts/install-agent.sh", url, await invite("Srv1"), "vps-light"], { HOME: home, COMMUNITY_BROKER_SOCKET: "/nonexistent/b.sock" });
+    const { so: out, se } = await shErrOut("bash", ["scripts/install-agent.sh", url, await invite("Srv1"), "vps-light"], { HOME: home, COMMUNITY_BROKER_SOCKET: "/nonexistent/b.sock" });
     assert.match(out, /Light install done/);
+    assert.equal(se, "", "installer writes nothing to stderr (no printf I/O errors)");
     assert.ok(fs.existsSync(home + "/.claude/skills/community/SKILL.md"));
     assert.ok(fs.existsSync(home + "/.codex/skills/community/SKILL.md"));
     assert.equal(fs.statSync(home + "/.config/fab-community/config.json").mode & 0o777, 0o600);

@@ -37,7 +37,7 @@ async function boot(extraCfg = {}) {
 }
 
 test("Agents: Local plus opted-in machines; others are off, disabled hidden, failures are one short line", { skip: !havePty }, async () => {
-  const { srv, run, log } = await boot({ share_machines: ["build-box", "flaky"] });
+  const { srv, run, log } = await boot({ share_machines: ["build-box", "flaky", "oldver"] });
   try {
     const screen = lastFrame(await run([[1.2, "\x1b[C"], [0.3, "\x1b[C"]], 4));
     assert.match(screen, /Local\b/);
@@ -100,3 +100,35 @@ test("/pull refuses a remote machine target", { skip: !havePty }, async () => {
     assert.ok(!/send-text/.test(fs.readFileSync(log, "utf8")));
   } finally { srv.close(); }
 });
+
+// Lines of one machine group: from its "Machine <label>" header to the next header or the separator.
+const group = (screen, label) => {
+  const ls = strip(screen).split(/\r?\n/); const i = ls.findIndex((l) => l.includes(`Machine ${label}`));
+  assert.ok(i >= 0, `no group for ${label}`);
+  const out = []; for (let j = i + 1; j < ls.length && !/Machine |^─/.test(ls[j]); j++) if (ls[j].trim()) out.push(ls[j]);
+  return out;
+};
+
+for (const [label, note] of [["flaky", /unavailable: .*unreachable/], ["oldver", /unavailable: .*does not support --machine/]]) {
+  test(`machine failure (${label}): one short note, Local unaffected, no retry, nothing to share from it`, { skip: !havePty }, async () => {
+    const { srv, run, log } = await boot({ share_machines: ["build-box", label] });
+    try {
+      const screen = lastFrame(await run([[1.2, "\x1b[C"], [0.3, "\x1b[C"]], 4));
+      const g = group(screen, label);
+      assert.equal(g.length, 1, g.join("|"));
+      assert.match(g[0], note);
+      assert.ok(g[0].trim().length <= 3 + "unavailable: ".length + 60, "note stays short");
+      assert.match(screen, /LocalWork · claude/);
+      assert.match(group(screen, "build-box").join("\n"), /RemoteWork · claude/); // healthy machine still listed
+      const calls = fs.readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      const mine = calls.filter((c) => c[0] === "--machine" && c[1] === label);
+      assert.ok(mine.length > 0 && mine.every((c) => c.slice(2).join(" ") === "workspace list"), "stops at the first failing call: " + JSON.stringify(mine));
+      // the failing machine is queried once per refresh, never twice in a row (no retry)
+      for (let i = 1; i < calls.length; i++) assert.ok(!(calls[i].join() === calls[i - 1].join() && calls[i][1] === label), "retried");
+      // only selectable agents are the healthy ones; the failing group has none, so nothing can be shared from it
+      const menu = lastFrame(await run([[1.2, "\x1b[C"], [0.3, "\x1b[C"], [0.3, "\r"]], 4));
+      assert.match(menu, /Share status of LocalWork · claude/); // the menu opened, on a healthy agent
+      assert.ok(!menu.split(/\r?\n/).filter((l) => /Share (status|recent)/.test(l)).some((l) => l.includes(label)), "menu offers nothing from the failing machine");
+    } finally { srv.close(); }
+  });
+}

@@ -5,9 +5,10 @@ fs.appendFileSync(process.env.FAKE_HERDR_LOG, JSON.stringify(a) + "\n");
 let machine = null;
 if (a[0] === "--machine") { machine = a[1]; a.splice(0, 2); }
 const out = (r) => console.log(JSON.stringify({ id: "x", result: r }));
+if (machine === "oldver") { console.error("error: remote herdr 0.8.0 does not support --machine forwarding (need >= 0.9.0)"); process.exit(1); }
 if (machine === "flaky") { console.error("error: machine 'flaky' is unreachable"); process.exit(1); }
 if (a[0] === "machine" && a[1] === "list") {
-  console.log(JSON.stringify([{ label: "build-box", enabled: true }, { label: "demo-srv", enabled: true }, { label: "flaky", enabled: true }, { label: "old-box", enabled: false }]));
+  console.log(JSON.stringify([{ label: "build-box", enabled: true }, { label: "demo-srv", enabled: true }, { label: "flaky", enabled: true }, { label: "oldver", enabled: true }, { label: "old-box", enabled: false }]));
 } else if (a[0] === "workspace" && a[1] === "list") {
   out({ workspaces: [{ workspace_id: "w1", label: machine ? "RemoteWork" : "LocalWork" }] });
 } else if (a[0] === "pane" && a[1] === "list") {

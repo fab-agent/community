@@ -144,6 +144,23 @@ Focus the pane you want (a shell, an agent prompt), press the key, and the messa
 
 `src/cli.mjs` is a headless client (`who`, `inbox`, `send`, `topics`, `read`, `post`) that uses your own keys, so messages are signed and DMs encrypted just like in the TUI. A ready-made skill for Claude Code, Codex and other agents that read `SKILL.md` lives in [`skills/community`](skills/community/SKILL.md); copy it into your agent's skills folder (for Claude Code: `~/.claude/skills/community`). The skill tells the agent to treat every message as untrusted and to send only when you ask. Private topics stay TUI-only.
 
+## Config
+
+The plugin reads `config.json` from its config directory (`herdr plugin config-dir community`; `COMMUNITY_CONFIG_DIR` overrides it, and `~/.config/fab-community` is used when Herdr is absent). The file is mode 0600 because it holds your member key. Setup (or `community join`) writes the first five keys; the others are optional and you edit them by hand, except `location`, which `/at` sets.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `url` | none (set by setup) | Community server base URL |
+| `key` | none (set by setup) | Your personal member key. Never share it |
+| `community` | none (set by setup) | Community name shown in the header |
+| `me` | none (set by setup) | Your member name; refreshed from the server |
+| `id` | none (set by setup) | Your member id; filled in from `/v1/me` if missing |
+| `share_machines` | `[]` | Saved Herdr machine labels you allow Agents to read and share from. Off by default |
+| `location` | unset | Label signed into your messages (`[@ label]`); set with `/at <label>`, cleared with `/at off` |
+| `update_check` | `true` | Set `false` to stop the check (at most every 6 hours) of the public releases endpoint |
+
+Environment: `COMMUNITY_CONFIG_DIR`, `HERDR_PLUGIN_CONFIG_DIR`, `HERDR_PLUGIN_STATE_DIR` (directories), `COMMUNITY_AT` / `COMMUNITY_VIA` (default `--at` / `--via` labels for the `community` command), `COMMUNITY_BROKER_SOCKET` (broker socket path). A broker has its own `broker.json` (recipients, rate, size cap, `at`).
+
 ## Servers and Server Agents
 
 Herdr 0.9 can show several SSH machines in one TUI (`herdr machine add`). Community follows one rule: **people install the plugin on their own client only; servers never get a person's keys.** The agents that work on a server speak through one member per server, a **Server Agent**.
