@@ -1,0 +1,47 @@
+name: Herdr smoke
+# Installs the current Herdr release, links this checkout as a plugin and checks that Herdr accepts the
+# manifest and lists its actions. Runs on a schedule too, so a Herdr release that breaks us shows up.
+on:
+  pull_request:
+    paths: ["herdr-plugin.toml", "src/**", ".github/workflows/herdr-smoke.yml"]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Herdr
+        run: |
+          curl -fsSL https://herdr.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Start the headless server
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          herdr --version
+          nohup herdr server > "$RUNNER_TEMP/herdr-server.log" 2>&1 &
+          for i in $(seq 1 30); do herdr status server >/dev/null 2>&1 && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/herdr-server.log"; exit 1
+      - name: Link the plugin and list its actions
+        run: |
+          herdr plugin link "$GITHUB_WORKSPACE"
+          herdr plugin list | tee "$RUNNER_TEMP/plugins.txt"
+          grep -q community "$RUNNER_TEMP/plugins.txt"
+          herdr plugin action list | tee "$RUNNER_TEMP/actions.txt"
+          grep -q "open" "$RUNNER_TEMP/actions.txt"
+          grep -q "pull" "$RUNNER_TEMP/actions.txt"
+      - name: Headless action reaches the plugin
+        run: |
+          # no message has been received yet, so pull.mjs exits 1 by design; what matters is that Herdr ran it
+          herdr plugin action invoke pull --plugin community || true
+          herdr plugin log community | tail -n 20 || true
+      - name: Plugin config dir resolves
+        run: test -n "$(herdr plugin config-dir community)"

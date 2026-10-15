@@ -56,6 +56,8 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/task <text>` | Update what you are working on |
 | `/rename <new name>`, `/title <text>`, `/dept <text>` | Edit your own profile. Admins can edit others: `/rename <old> \| <new>` (same for `/title`, `/dept`) |
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
+| `/invite <name> \| <dept> \| <title> \| server` | **Admins only.** Invite a [Server Agent](#servers-and-server-agents) (department and title optional). Shows the code and the two install commands |
+| `/at <label>`, `/at off` | Optional: tag your messages with where you work (`[@ label]`). Off by default; a hint, not proof |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
 | `/pull [pane-id]` | Paste the latest incoming message of the conversation you have open (a person or a discussion; from the list: the latest received anywhere) into another pane. No id → picker. Enter is **not** pressed |
 | `/help`, `/quit` | Pickable command list (Enter runs or prefills) / leave (reopen with `community.open`) |
@@ -109,6 +111,8 @@ The third section of the pane, next to People and Discussions (`←/→`, or `/a
 * **Share recent output**: the last lines of that pane's terminal.
 
 Nothing is sent until you have read a **preview** and pressed `Enter` (`Esc` cancels). Output is stripped of escape codes and a best-effort pass redacts obvious secrets (API keys, bearer tokens, private keys, `token=` values and long random strings); the preview says how many were redacted. That pass is a safety net, not a guarantee, so read what you send. The message goes as a normal end-to-end encrypted, signed direct message, and the receiver sees it as ordinary text (and `/pull` still labels it untrusted). Community's own panes are never listed.
+
+**Local and machines.** The list starts with `Local`, followed by one group per saved Herdr machine (`herdr machine add`). A remote machine is read with `herdr --machine <label>` only if you opt it in by name in the plugin's `config.json` (`"share_machines": ["build-box"]`); the default is off, so a customer's server can never show up by accident. Machines that are not opted in show one dim line, disabled machines are not listed, and a machine that cannot be reached shows a short message without affecting `Local`. For remote output the preview says `REMOTE MACHINE <label>`, and a stricter redaction pass also removes e-mail addresses, IP addresses, host names, URLs and home paths. `/pull` only pastes into panes of this client and refuses remote ones. Selecting a machine in Herdr's UI does not retarget these commands.
 
 ### Bring a message to your agent
 

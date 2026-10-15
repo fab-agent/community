@@ -1,6 +1,6 @@
 # Server Agents (design for v0.5)
 
-Status: proposed. Replaces nothing yet; extends the signing and E2EE design in `e2ee-design.md` and `threat-model.md`.
+Status: implemented in v0.5 (see the notes under Open questions). Replaces nothing yet; extends the signing and E2EE design in `e2ee-design.md` and `threat-model.md`.
 
 ## Problem
 
@@ -90,10 +90,16 @@ Schema: migration `0005` adds `members.kind`, `members.policy` (JSON: rate, reci
 
 ## Open questions
 
-1. Can the client plugin read which saved machine owns the focused workspace through the Herdr API? If not, location needs a manual selector.
-2. Do plugin panes, `pane send-text` and the pane picker work over `--machine` as assumed? (Test on a real machine before building.)
-3. Rate limits as fixed numbers or per-member config set at invite time?
-4. Should Server Agents be visible in People as a separate section ("Servers")?
+1. **Location from Herdr.** Resolved: the Herdr API (`herdr api snapshot`, `herdr api schema`, herdr 0.9.3) exposes no machine for a pane or workspace, so there is no `auto` mode. Humans set the label by hand with `/at <label>` (stored as `location` in `config.json`, signed with each message; no extra request to the server).
+2. **`--machine` behaviour.** `herdr --machine <label> pane list|read` and `workspace list` work as assumed. Plain `herdr ...` commands always address this client's own server, even when a machine is selected in the UI, so `/pull` (`pane send-text`) cannot reach a remote pane by accident; it additionally refuses ids that are not local panes. See "Verified" below.
+3. Rate limits are per-member policy set at invite time (default 20 / 10 min).
+4. Servers appear in People as a separate "Servers" section under their owner.
+
+### Verified (Herdr 0.9.3, two saved machines)
+
+- `herdr pane list` returned only this client's panes while a saved machine was marked `selected` in `herdr machine list`; `herdr --machine <label> pane list` returned that machine's panes. Pane ids repeat across machines (`w1:p1` can exist on both), so the TUI keys remote agents by machine and pane.
+- The Agents section listed `Local` plus the opted-in machine, and showed the other saved machine as "sharing off" without querying it.
+- Not yet verified by hand: running the Community pane while a remote machine is selected in the Herdr UI (plugins then run on that machine), and a version-mismatch error from `--machine`.
 
 ## Test plan
 

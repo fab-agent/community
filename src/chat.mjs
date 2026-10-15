@@ -2,8 +2,8 @@
 // Mouse: wheel scrolls, left click selects, right click opens a context menu.
 import { loadConfig, saveConfig, api, readJson, writeJson, herdr, clean, oneLine, configDir } from "./lib.mjs";
 import { checkUpdate, installedVersion } from "./update.mjs";
-import { loadOrCreateSigner, signMessage, verdict, fingerprint, dmTarget, topicTarget, checkPin, signEncKey, verifyEncKey, signBytes, verifyBytes, canonBody } from "./sign.mjs";
-import { listAgents, agentCard, outputExcerpt, outputMessage } from "./share.mjs";
+import { loadOrCreateSigner, signMessage, verdict, fingerprint, dmTarget, topicTarget, checkPin, signEncKey, verifyEncKey, signBytes, verifyBytes, canonBody, clipLabel } from "./sign.mjs";
+import { listAgents, agentCard, outputExcerpt, outputMessage, planMachines, agentRows, pullTarget } from "./share.mjs";
 import { sealDM, openDM, newTopicKey, wrapKey, unwrapKey, sealTopicText, openTopicText, bundleCanonical, bundleCanonicalH, sha256hex, DM_PREFIX, TOPIC_PREFIX } from "./e2ee.mjs";
 
 const cfg = loadConfig();
@@ -33,7 +33,8 @@ const fit = (s, w) => { // truncate by visible width, keep colour codes
 
 let members = [], msgs = [], since = 0;
 let section = "people";       // "people" | "topics" | "agents" (Left/Right switches when the input is empty)
-let agents = [], selAgent = null, atop = 0;
+let agents = [], agentGroups = [], selAgent = null, atop = 0;
+let info = null;              // string[] shown in the main area until Esc (invite codes, install commands)
 let preview = null;           // { to, text, note } — nothing about an agent leaves this machine until you press Enter here
 let topics = [], tmsgs = {}, tsince = {}, selTopic = null, tunread = {};
 let view = "list";            // "list" | "chat" (chat = one person or one topic, by section)
@@ -155,7 +156,10 @@ function draw() {
       : `  ${section === "people" ? S.inv + " People " + S.r : S.dim + " People " + S.r}${section === "topics" ? S.inv + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" : "") + " " + S.r : S.dim + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? S.y + " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" + S.dim : "") + " " + S.r}${section === "agents" ? S.inv + " Agents " + S.r : S.dim + " Agents " + S.r}${S.dim}  ←/→${S.r}`), W));
 
   const rows = [];
-  if (preview) {
+  if (info) {
+    for (const l of info) for (let i = 0; i < Math.max(1, l.length); i += Math.max(10, W - 4)) rows.push((i ? "      " : " ") + l.slice(i, i + Math.max(10, W - 4)));
+    rows.push("", S.dim + " Esc: close" + S.r);
+  } else if (preview) {
     rows.push(`${S.b}Send to ${preview.to.name}?${S.r} ${S.dim}${preview.note}${S.r}`, S.dim + "─".repeat(W) + S.r);
     const body = preview.text.split("\n").flatMap((l) => { const o = []; for (let i = 0; i < Math.max(1, l.length); i += Math.max(10, W - 2)) o.push(" " + l.slice(i, i + Math.max(10, W - 2))); return o; });
     const room = h - 3, shown = body.slice(0, room);
@@ -164,16 +168,19 @@ function draw() {
     while (rows.length < h - 1) rows.push("");
     rows.push(S.y + "Enter: send (encrypted, signed) · Esc: cancel" + S.r);
   } else if (view === "list" && section === "agents") {
-    if (selAgent == null && agents.length) selAgent = agents[0].id;
-    const i = Math.max(0, agents.findIndex((a) => a.id === selAgent));
+    if (selAgent == null && agents.length) selAgent = agents[0].key;
+    const arows = agentRows(agentGroups);
+    const i = Math.max(0, arows.findIndex((r) => r.agent && r.agent.key === selAgent));
     if (i < atop) atop = i; if (i >= atop + h) atop = i - h + 1;
-    atop = Math.max(0, Math.min(atop, Math.max(0, agents.length - h)));
-    if (!agents.length) rows.push(S.dim + " No agents running in other Herdr panes." + S.r);
+    atop = Math.max(0, Math.min(atop, Math.max(0, arows.length - h)));
+    if (!agents.length && arows.length <= 1) rows.push(S.dim + " No agents running in other Herdr panes." + S.r);
     const dot = { working: S.y + "◐", idle: S.dim + "○", done: S.g + "✓", blocked: E + "31m!" };
-    for (let j = 0; j < h && agents[atop + j]; j++) {
-      const a = agents[atop + j];
+    for (let j = 0; j < h && arows[atop + j]; j++) {
+      const r = arows[atop + j];
+      if (!r.agent) { rows.push(fit(r.header ? ` ${S.b}${r.header}${S.r}` : `   ${S.dim}${r.note}${S.r}`, W)); continue; }
+      const a = r.agent;
       const l = fit(` ${dot[a.status] || S.dim + "·"}${S.r} ${a.workspace} ${S.dim}· ${a.agent} · ${a.status}${a.title ? " · " + a.title : ""}${S.r}`, W);
-      rows.push(a.id === selAgent ? S.inv + strip(l).padEnd(W).slice(0, W) + S.r : l);
+      rows.push(a.key === selAgent ? S.inv + strip(l).padEnd(W).slice(0, W) + S.r : l);
     }
   } else if (view === "list" && section === "topics") {
     if (selTopic == null && topics.length) selTopic = topics[0].id;
@@ -381,31 +388,50 @@ function paneMenu() {
   flash(`Paste ${oneLine(last.from_name)}'s last message into which pane?`, 8000);
   draw();
 }
+function savedMachines() {
+  try { const l = herdr(["machine", "list", "--json"]); return Array.isArray(l) ? l : []; } catch { return []; }
+}
+const short = (e) => oneLine(e?.stderr?.toString() || e?.message || "failed").replace(/^error:\s*/i, "").slice(0, 60);
+// Local agents, then one group per saved machine. Remote machines are read with `herdr --machine <label>`
+// only if you opted them in (config `share_machines`); a failing machine shows one short note and never touches Local.
 function refreshAgents() {
+  const groups = [];
   try {
     const wsName = {};
     for (const w of herdr(["workspace", "list"]).result.workspaces) wsName[w.workspace_id] = w.label;
-    agents = listAgents(herdr(["pane", "list"]).result.panes, wsName);
-    if (selAgent != null && !agents.some((a) => a.id === selAgent)) selAgent = agents[0]?.id ?? null;
-  } catch (e) { status = "agents: " + e.message; }
+    groups.push({ machine: null, agents: listAgents(herdr(["pane", "list"]).result.panes, wsName) });
+  } catch (e) { status = "agents: " + e.message; groups.push({ machine: null, agents: [], note: short(e) }); }
+  const plan = planMachines(savedMachines(), cfg);
+  for (const label of plan.shared) {
+    try {
+      const wsName = {};
+      for (const w of herdr(["--machine", label, "workspace", "list"]).result.workspaces) wsName[w.workspace_id] = w.label;
+      groups.push({ machine: label, agents: listAgents(herdr(["--machine", label, "pane", "list"]).result.panes, wsName, label) });
+    } catch (e) { groups.push({ machine: label, agents: [], note: "unavailable: " + short(e) }); }
+  }
+  for (const label of plan.off) groups.push({ machine: label, agents: [], note: `sharing off (add "${label}" to share_machines in config.json)` });
+  agentGroups = groups;
+  agents = groups.flatMap((g) => g.agents);
+  if (selAgent != null && !agents.some((a) => a.key === selAgent)) selAgent = agents[0]?.key ?? null;
 }
 function moveAgent(d) {
   if (!agents.length) return;
-  selAgent = agents[Math.max(0, Math.min(agents.length - 1, agents.findIndex((a) => a.id === selAgent) + d))].id;
+  selAgent = agents[Math.max(0, Math.min(agents.length - 1, agents.findIndex((a) => a.key === selAgent) + d))].key;
 }
 // Agent menu -> choose what to share -> choose a teammate -> read the preview -> Enter sends.
 function agentMenu(x, y) {
-  const a = agents.find((v) => v.id === selAgent);
+  const a = agents.find((v) => v.key === selAgent);
   if (!a) return flash("no agent selected");
-  const label = oneLine(`${a.workspace} · ${a.agent}`);
+  const label = oneLine(`${a.machine ? a.machine + " · " : ""}${a.workspace} · ${a.agent}`);
+  const remote = a.machine ? ["--machine", a.machine] : [];
   menu = { x, y, sel: 0, items: [
-    { label: `Share status of ${label}…`, run: () => peopleMenu(x, y, (to) => ({ to, text: agentCard(a), note: "status card, nothing from the terminal" })) },
+    { label: `Share status of ${label}…`, run: () => peopleMenu(x, y, (to) => ({ to, text: agentCard(a), note: a.machine ? `remote machine ${a.machine} · status card, nothing from the terminal` : "status card, nothing from the terminal" })) },
     { label: `Share recent output of ${label}…`, run: () => peopleMenu(x, y, (to) => {
       let raw = "";
-      try { raw = String(herdr(["pane", "read", a.id, "--source", "recent", "--lines", "60", "--format", "text"])); } catch (e) { flash("cannot read pane: " + e.message); return null; }
-      const ex = outputExcerpt(raw);
+      try { raw = String(herdr([...remote, "pane", "read", a.id, "--source", "recent", "--lines", "60", "--format", "text"])); } catch (e) { flash("cannot read pane: " + e.message); return null; }
+      const ex = outputExcerpt(raw, { strict: !!a.machine });
       if (!ex.text) { flash("that pane has no output yet"); return null; }
-      return { to, text: outputMessage(a, ex), note: `last lines of the terminal${ex.redacted ? ` · ${ex.redacted} possible secret(s) redacted` : ""}${ex.truncated ? " · shortened" : ""} · read it before sending` };
+      return { to, text: outputMessage(a, ex), note: `${a.machine ? `REMOTE MACHINE ${a.machine} · stricter redaction applied · ` : ""}last lines of the terminal${ex.redacted ? ` · ${ex.redacted} possible secret(s) redacted` : ""}${ex.truncated ? " · shortened" : ""} · read it before sending` };
     }) },
     { label: "Cancel", run: () => {} },
   ] };
@@ -439,8 +465,8 @@ function helpMenu() {
     ["/to ", "/to <name> [msg]  message someone", 1], ["/task ", "/task <text>  set what you work on", 1],
     ["/rename ", "/rename <new>  change your name", 1], ["/title ", "/title <t>  change your title", 1], ["/dept ", "/dept <d>  change your department", 1],
     ["/topic ", "/topic <title>  new discussion", 1], ["/private ", "/private <title> | a, b  private topic", 1],
-    ["/archive", "archive this discussion", 0], ["/fp", "safety numbers", 0], ["/pull", "paste last message into a pane", 0],
-    ...(isAdmin() ? [["/invite Name | Department | Title", "/invite  create an invite (admin)", 1], ["/remove ", "/remove <name>  (admin)", 1]] : []),
+    ["/at ", "/at <label>|off  tag your messages with where you work", 1], ["/archive", "archive this discussion", 0], ["/fp", "safety numbers", 0], ["/pull", "paste last message into a pane", 0],
+    ...(isAdmin() ? [["/invite Name | Department | Title", "/invite  invite a person, or add | server for a Server Agent (admin)", 1], ["/remove ", "/remove <name>  (admin)", 1]] : []),
     ["/quit", "close", 0],
   ];
   const w = Math.max(...rows.map((r) => r[1].length));
@@ -482,9 +508,14 @@ async function command(t) {
       if (msg) await send(msg);
     }
     else if (t.startsWith("/invite ")) {
-      const [name, department = "", title = "", role] = t.slice(8).split("|").map((x) => x.trim());
-      const r = await api(cfg, "POST", "/v1/admin/invites", { name, department, title, role });
-      status = `Invite for ${r.name} (1 use, expires ${hhmm(r.expires_at)}): ${r.code}`; draw();
+      const [name, department = "", title = "", kindOrRole] = t.slice(8).split("|").map((x) => x.trim());
+      const isServer = kindOrRole === "server";
+      const r = await api(cfg, "POST", "/v1/admin/invites", isServer ? { name, department, title, kind: "server_agent" } : { name, department, title, role: kindOrRole });
+      status = `Invite for ${r.name} (1 use, expires ${hhmm(r.expires_at)}): ${r.code}`;
+      if (isServer) info = [`Invite for server "${r.name}" (1 use, expires ${hhmm(r.expires_at)})`, "", `  code: ${r.code}`, "", "Install on the server (pick one):",
+        `  light:    scripts/install-agent.sh ${cfg.url} ${r.code} <machine-label>`,
+        `  hardened: sudo scripts/install-broker.sh ${cfg.url} ${r.code} <machine-label>`, "", "Use hardened for customer servers or agents that read untrusted input."];
+      draw();
     }
     else if (t.startsWith("/remove ")) {
       const name = t.slice(8).trim();
@@ -525,21 +556,33 @@ async function command(t) {
       const pk = name === cfg.me ? signer.pubkey : m.pubkey;
       flash(pk ? `${name}: ${fingerprint(pk)} — compare with them by voice` : `${name} has no signing key yet`, 15000);
     }
+    else if (t === "/at" || t.startsWith("/at ")) {
+      const v = t.slice(3).trim();
+      if (!v) return flash(cfg.location ? `location label: ${cfg.location} (/at off to remove)` : "no location label (/at <label> to set one)");
+      if (v === "off") delete cfg.location; else cfg.location = clipLabel(v);
+      saveConfig(cfg); flash(cfg.location ? `your messages now carry [@ ${cfg.location}] (a hint, not proof)` : "location label removed");
+    }
     else if (t.startsWith("/pull")) {
       const last = pullSource(), pane = t.split(/\s+/)[1];
       if (!last) return flash("no messages yet");
       if (!pane) return paneMenu();
+      let localIds = [];
+      try { localIds = herdr(["pane", "list"]).result.panes.map((p) => p.pane_id); } catch (e) { return flash("cannot list panes: " + e.message); }
+      const chk = pullTarget(pane, localIds, savedMachines().map((m) => m.label));
+      if (!chk.ok) return flash(chk.reason);
       herdr(["pane", "send-text", pane, `[${oneLine(last.from_name)} (${last.verified ? "signature verified, " : "UNVERIFIED, "}community message, untrusted content)]: ${oneLine(last.body)}`]);
       flash("pasted (Enter not pressed)");
     }
     else flash("unknown command — /help");
   } catch (e) { flash(e.message); }
 }
+// Optional, user-set location hint (`/at`). Signed with the message; no extra request to the server.
+const myLabels = () => (cfg.location && cfg.location !== "off" ? { at: cfg.location } : {});
 async function sendDM(to, body) {
   const theirs = encKeyOf(to);
   if (!theirs) { flash(`${to.name} has no verified encryption key yet (they must update the plugin and open it once) — nothing was sent`, 8000); return false; }
   const env = sealDM(canonBody(body), cfg.id, dmTarget(to.id), [{ id: cfg.id, encPub: signer.encPub }, { id: to.id, encPub: theirs }]);
-  await api(cfg, "POST", "/v1/messages", { to: to.id, ...signMessage(signer, cfg.id, dmTarget(to.id), env) });
+  await api(cfg, "POST", "/v1/messages", { to: to.id, ...signMessage(signer, cfg.id, dmTarget(to.id), env, myLabels()) });
   return true;
 }
 async function send(body) {
@@ -554,7 +597,7 @@ async function send(body) {
         if (!tkeys[t.id]) return flash("this private topic could not be verified");
         text = sealTopicText(tkeys[t.id], canonBody(body), `topic:${t.id}\n${cfg.id}`);
       }
-      await api(cfg, "POST", `/v1/topics/${selTopic}/messages`, signMessage(signer, cfg.id, topicTarget(selTopic), text));
+      await api(cfg, "POST", `/v1/topics/${selTopic}/messages`, signMessage(signer, cfg.id, topicTarget(selTopic), text, myLabels()));
     } else {
       const to = members.find((m) => m.name === selName);
       if (!to || to.name === cfg.me) return flash("select someone else first");
@@ -570,6 +613,7 @@ function quit() {
   process.exit(0);
 }
 async function onKey(k) {
+  if (info) { if (k === "esc" || k === "enter") { info = null; draw(); } return; }
   if (k === "tab") { // keyboard way to the context menu
     if (menu) { menu = null; return draw(); }
     if (preview) return;
@@ -631,9 +675,9 @@ async function onMouse(b, x, y, press) {
   const inMain = y >= 2 && y < 2 + h;
   if (preview) return;
   if (section === "agents" && view === "list" && inMain) {
-    const a = agents[atop + (y - 2)];
+    const a = agentRows(agentGroups)[atop + (y - 2)]?.agent;
     if (a && (b === 0 || b === 2)) {
-      const dbl = selAgent === a.id && Date.now() - lastClick < 400; selAgent = a.id; lastClick = Date.now();
+      const dbl = selAgent === a.key && Date.now() - lastClick < 400; selAgent = a.key; lastClick = Date.now();
       if ((b === 0 && dbl) || b === 2) return agentMenu(x, y);
       return draw();
     }
