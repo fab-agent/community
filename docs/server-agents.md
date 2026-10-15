@@ -24,6 +24,8 @@ Every message already carries a signed body (`community/v1\nfrom\ntarget\nts\nno
 - `via`: which sub-agent asked the broker to send (name and, where known, the herdr pane). Set by the broker from the caller's local socket credentials, not by the sub-agent's text.
 - `at` (location): the machine the sender was working on. For humans it is the saved machine of the focused workspace, read on the client. For Server Agents it is the server's own label.
 
+Wire format: when `via` or `at` is present, the signature covers `community/v2\nfrom\ntarget\nts\nnonce\nvia\nat\nbody`; without labels the original `community/v1` text is used, so existing clients and messages keep verifying.
+
 Both labels are **assertions by the signer, not proofs**. A signature proves the message came from the holder of that member's key and was not altered. It does not prove which sub-agent or which machine produced it. Receivers show the labels in a distinct style and never use them for trust decisions.
 
 People section: a member's current location is shown only if the member opted in.

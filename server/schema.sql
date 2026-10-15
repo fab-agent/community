@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS members (
   pubkey TEXT,
   enc_pubkey TEXT,
   enc_sig TEXT,
+  kind TEXT NOT NULL DEFAULT 'human',
+  policy TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS messages (
@@ -22,7 +24,9 @@ CREATE TABLE IF NOT EXISTS messages (
   topic_id INTEGER,
   ts INTEGER,
   nonce TEXT,
-  sig TEXT
+  sig TEXT,
+  via TEXT,
+  at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_msg_to ON messages(to_id, id);
 CREATE INDEX IF NOT EXISTS idx_msg_from ON messages(from_id, id);
@@ -32,6 +36,8 @@ CREATE TABLE IF NOT EXISTS invites (
   department TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT 'member',
+  kind TEXT NOT NULL DEFAULT 'human',
+  policy TEXT NOT NULL DEFAULT '',
   created_by TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,

@@ -24,7 +24,7 @@ const safeEq = (a, b) => {
 };
 const bearer = (req) => (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
 const pub = (m) => ({
-  id: m.id, role: m.role || "member", name: m.name, department: m.department, title: m.title, task: m.task,
+  id: m.id, role: m.role || "member", kind: m.kind || "human", name: m.name, department: m.department, title: m.title, task: m.task,
   pubkey: m.pubkey || null, enc_pubkey: m.enc_pubkey || null, enc_sig: m.enc_sig || null,
   last_seen: m.last_seen, online: Date.now() - m.last_seen < 90_000,
 });
@@ -39,6 +39,27 @@ const clipLine = (v, n) => clip(v, n).replace(/[\n\t]+/g, " ");
 // so neither the server nor another member can put words in someone's mouth undetected.
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const canonical = (from, target, ts, nonce, body) => `community/v1\n${from}\n${target}\n${ts}\n${nonce}\n${body}`;
+// v2 additionally signs the optional via/at labels (assertions by the signer, not proofs; see docs/server-agents.md).
+const canonicalV2 = (from, target, ts, nonce, via, at, body) => `community/v2\n${from}\n${target}\n${ts}\n${nonce}\n${via}\n${at}\n${body}`;
+
+// ---- Server Agent policy: enforced here, so it holds even if the agent's key is stolen ----
+const DEFAULT_AGENT_POLICY = { rate: { max: 20, window_s: 600 }, recipients: "admins", topics: "public", max_body: 2000 };
+export function normalizePolicy(raw) {
+  let p = raw;
+  if (typeof raw === "string") { try { p = raw ? JSON.parse(raw) : {}; } catch { p = {}; } }
+  if (!p || typeof p !== "object") p = {};
+  const d = DEFAULT_AGENT_POLICY;
+  const int = (v, lo, hi, dflt) => (Number.isFinite(Number(v)) ? Math.min(Math.max(Math.trunc(Number(v)), lo), hi) : dflt);
+  const recipients = p.recipients === "admins" ? "admins"
+    : Array.isArray(p.recipients) ? p.recipients.map((n) => clipLine(n, 40).trim().toLowerCase()).filter(Boolean).slice(0, 50) : d.recipients;
+  return {
+    rate: { max: int(p.rate?.max, 1, 1000, d.rate.max), window_s: int(p.rate?.window_s, 10, 86400, d.rate.window_s) },
+    recipients,
+    topics: p.topics === "none" ? "none" : "public",
+    max_body: int(p.max_body, 1, 4000, d.max_body),
+  };
+}
+const agentPolicy = (m) => (m.kind === "server_agent" ? normalizePolicy(m.policy) : null);
 async function verifySig(pubkey, msg, sig) {
   try {
     const k = await crypto.subtle.importKey("raw", b64(pubkey), { name: "Ed25519" }, false, ["verify"]);
@@ -48,8 +69,25 @@ async function verifySig(pubkey, msg, sig) {
 const validPubkey = (k) => typeof k === "string" && /^[A-Za-z0-9+/]{43}=$/.test(k);
 // Validate/store a message from `me`. target = {kind:"dm",to_id} | {kind:"topic",topic_id}.
 async function storeMessage(env, me, b, target, now) {
-  const body = clip(b.body, /^e2ee1/.test(String(b.body)) ? 16000 : 4000).trim();
+  const pol = agentPolicy(me);
+  const e2ee = /^e2ee1/.test(String(b.body));
+  const body = clip(b.body, e2ee ? 16000 : 4000).trim();
   if (!body) return err(400, "body required");
+  const via = clipLine(b.via, 60).trim(), at = clipLine(b.at, 60).trim();
+  if (pol) {
+    // Server Agents must sign (so the broker's labels are bound to its key) and stay inside their policy.
+    if (!me.pubkey) return err(403, "a server agent must register a signing key first");
+    if (target.kind === "dm") {
+      const ok = pol.recipients === "admins" ? target.to_role === "admin" : pol.recipients.includes(String(target.to_name).toLowerCase());
+      if (!ok) return err(403, "recipient not allowed by this agent's policy");
+    } else if (target.private || pol.topics === "none") {
+      return err(403, "topic not allowed by this agent's policy");
+    }
+    if (body.length > (e2ee ? pol.max_body * 8 : pol.max_body)) return err(413, "message too large for this agent's policy");
+    const since = now - pol.rate.window_s * 1000;
+    const w = await env.DB.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS t FROM messages WHERE from_id=? AND created_at>?").bind(me.id, since).first();
+    if (w.n >= pol.rate.max) return json({ error: "rate limit for this agent", retry_after: Math.max(1, Math.ceil((w.t + pol.rate.window_s * 1000 - now) / 1000)) }, 429);
+  }
   if (target.kind === "topic" && target.private && !body.startsWith("e2ee1t:")) return err(400, "private topics accept encrypted messages only");
   const tgt = target.kind === "dm" ? `dm:${target.to_id}` : `topic:${target.topic_id}`;
   let ts = null, nonce = null, sig = null;
@@ -59,11 +97,12 @@ async function storeMessage(env, me, b, target, now) {
     if (!sig || !/^[A-Za-z0-9_-]{8,64}$/.test(nonce) || !Number.isFinite(ts)) return err(400, "signature required (ts, nonce, sig)");
     if (Math.abs(now - ts) > 600_000) return err(400, "timestamp out of range");
     if (b.body !== body) return err(400, "body must be sent trimmed and without control characters");
-    if (!(await verifySig(me.pubkey, canonical(me.id, tgt, ts, nonce, body), sig))) return err(400, "bad signature");
+    const msg = via || at ? canonicalV2(me.id, tgt, ts, nonce, via, at, body) : canonical(me.id, tgt, ts, nonce, body);
+    if (!(await verifySig(me.pubkey, msg, sig))) return err(400, "bad signature");
   }
   try {
-    const r = await env.DB.prepare("INSERT INTO messages (from_id,to_id,body,created_at,topic_id,ts,nonce,sig) VALUES (?,?,?,?,?,?,?,?)")
-      .bind(me.id, target.kind === "dm" ? target.to_id : "", body, now, target.kind === "topic" ? target.topic_id : null, ts, nonce, sig || null).run();
+    const r = await env.DB.prepare("INSERT INTO messages (from_id,to_id,body,created_at,topic_id,ts,nonce,sig,via,at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .bind(me.id, target.kind === "dm" ? target.to_id : "", body, now, target.kind === "topic" ? target.topic_id : null, ts, nonce, sig || null, via || null, at || null).run();
     return json({ id: r.meta.last_row_id }, 201);
   } catch { return err(409, "replayed message"); }
 }
@@ -134,13 +173,13 @@ export default {
       await env.DB.prepare("UPDATE members SET name=name||' ['||substr(id,1,6)||']' WHERE name=? AND revoked=1").bind(inv.name).run();
       try {
         await env.DB.prepare(
-          "INSERT INTO members (id,name,department,title,role,key_hash,pubkey,created_at) VALUES (?,?,?,?,?,?,?,?)"
-        ).bind(id, inv.name, inv.department, inv.title, inv.role, await sha256(key), pubkey, now).run();
+          "INSERT INTO members (id,name,department,title,role,kind,policy,key_hash,pubkey,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+        ).bind(id, inv.name, inv.department, inv.title, inv.role, inv.kind, inv.policy, await sha256(key), pubkey, now).run();
       } catch {
         await env.DB.prepare("UPDATE invites SET used_at=NULL WHERE code_hash=?").bind(ch).run();
         return err(409, "name already exists");
       }
-      return json({ id, name: inv.name, role: inv.role, key }, 201);
+      return json({ id, name: inv.name, role: inv.role, kind: inv.kind, key }, 201);
     }
 
     // ---- admin: ADMIN_KEY (bootstrap) or a member whose role is "admin" ----
@@ -159,8 +198,10 @@ export default {
         if (!name) return err(400, "name required");
         if (await env.DB.prepare("SELECT 1 FROM members WHERE name=? AND revoked=0").bind(name).first()) return err(409, "name already exists");
         const hours = Math.min(Math.max(Number(b.ttl_hours) || 1, 1), 24 * 14);
-        const role = b.role === "admin" ? "admin" : "member";
+        const kind = b.kind === "server_agent" ? "server_agent" : "human";
+        const role = kind === "server_agent" ? "member" : b.role === "admin" ? "admin" : "member"; // agents are never admins
         if (role === "admin" && actor) return err(403, "only the root ADMIN_KEY can invite admins");
+        const policy = kind === "server_agent" ? JSON.stringify(normalizePolicy(b.policy)) : "";
         // At most one invite per minute per admin: limits invite spam and brute-force name probing.
         const last = await env.DB.prepare("SELECT MAX(created_at) AS t FROM invites WHERE created_by=?").bind(by).first();
         if (last?.t && now - last.t < 60_000)
@@ -168,13 +209,13 @@ export default {
         const code = randomCode();
         const expires_at = now + hours * 3_600_000;
         await env.DB.prepare(
-          "INSERT INTO invites (code_hash,name,department,title,role,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?)"
-        ).bind(await sha256(code), name, clipLine(b.department, 60), clipLine(b.title, 60), role, by, now, expires_at).run();
-        return json({ code, name, role, expires_at }, 201);
+          "INSERT INTO invites (code_hash,name,department,title,role,kind,policy,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+        ).bind(await sha256(code), name, clipLine(b.department, 60), clipLine(b.title, 60), role, kind, policy, by, now, expires_at).run();
+        return json({ code, name, role, kind, expires_at }, 201);
       }
       if (path === "/v1/admin/invites" && req.method === "GET") {
         const { results } = await env.DB.prepare(
-          "SELECT name,department,title,role,created_at,expires_at,used_at FROM invites ORDER BY created_at DESC LIMIT 100"
+          "SELECT name,department,title,role,kind,created_at,expires_at,used_at FROM invites ORDER BY created_at DESC LIMIT 100"
         ).all();
         return json(results);
       }
@@ -225,6 +266,13 @@ export default {
         if (actor && (target.role === "admin" || target.id === actor.id)) return err(403, "admins can only be revoked with the root ADMIN_KEY");
         await env.DB.prepare("UPDATE members SET revoked=1 WHERE id=?").bind(target.id).run();
         return json({ ok: true });
+      }
+      const pm = path.match(/^\/v1\/admin\/members\/([^/]+)\/policy$/);
+      if (pm && req.method === "POST") { // only server agents carry a policy
+        const b = await req.json().catch(() => ({}));
+        const policy = JSON.stringify(normalizePolicy(b.policy ?? b));
+        const x = await env.DB.prepare("UPDATE members SET policy=? WHERE (id=? OR name=?) AND kind='server_agent'").bind(policy, pm[1], decodeURIComponent(pm[1])).run();
+        return x.meta.changes ? json({ ok: true, policy: JSON.parse(policy) }) : err(404, "server agent not found");
       }
       const rk = path.match(/^\/v1\/admin\/members\/([^/]+)\/reset-key$/);
       if (rk && req.method === "POST") { // lost device: forget the signing key so the member can register a new one
@@ -279,11 +327,12 @@ export default {
     }
     if (path === "/v1/messages" && req.method === "POST") {
       const b = await req.json().catch(() => ({}));
-      const to = await env.DB.prepare("SELECT id FROM members WHERE (id=? OR name=?) AND revoked=0").bind(b.to, b.to).first();
+      const to = await env.DB.prepare("SELECT id,name,role FROM members WHERE (id=? OR name=?) AND revoked=0").bind(b.to, b.to).first();
       if (!to) return err(404, "recipient not found");
-      return storeMessage(env, me, b, { kind: "dm", to_id: to.id }, now);
+      return storeMessage(env, me, b, { kind: "dm", to_id: to.id, to_name: to.name, to_role: to.role }, now);
     }
     if (path === "/v1/topics" && req.method === "POST") {
+      if (me.kind === "server_agent") return err(403, "server agents cannot open topics");
       const b = await req.json().catch(() => ({}));
       const priv = b.private === true;
       const title = priv ? clip(b.title, 600).trim() : clipLine(b.title, 80).trim();
@@ -354,7 +403,7 @@ export default {
       if (tm[2] === "messages" && req.method === "GET") {
         const since = Number(url.searchParams.get("since") || 0);
         const { results } = await env.DB.prepare(
-          `SELECT m.id,m.from_id,m.body,m.created_at,m.ts,m.nonce,m.sig,f.name AS from_name
+          `SELECT m.id,m.from_id,m.body,m.created_at,m.ts,m.nonce,m.sig,m.via,m.at,f.name AS from_name
            FROM messages m JOIN members f ON f.id=m.from_id
            WHERE m.topic_id=? AND m.id>? AND m.created_at>=? ORDER BY m.id LIMIT 200`
         ).bind(topic.id, since, cutoff(env, now)).all();
@@ -364,7 +413,7 @@ export default {
     if (path === "/v1/messages" && req.method === "GET") {
       const since = Number(url.searchParams.get("since") || 0);
       const peer = url.searchParams.get("peer");
-      let q = `SELECT m.id,m.from_id,m.to_id,m.body,m.created_at,m.ts,m.nonce,m.sig,f.name AS from_name,t.name AS to_name
+      let q = `SELECT m.id,m.from_id,m.to_id,m.body,m.created_at,m.ts,m.nonce,m.sig,m.via,m.at,f.name AS from_name,t.name AS to_name
                FROM messages m JOIN members f ON f.id=m.from_id JOIN members t ON t.id=m.to_id
                WHERE m.topic_id IS NULL AND m.id>? AND m.created_at>=? AND (m.to_id=? OR m.from_id=?)`;
       const args = [since, cutoff(env, now), me.id, me.id];

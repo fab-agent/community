@@ -261,3 +261,94 @@ test("private topic: members only, key bundle signed, plaintext rejected, outsid
   await call(env, "POST", "/v1/admin/members/Bob/revoke", { key: ADMIN });
   assert.equal((await call(env, "GET", `/v1/topics/${id}/messages`, { key: b.key })).status, 401);
 });
+
+// ---- Server Agents -------------------------------------------------------------
+const agentInvite = async (env, name, policy, by = ADMIN) => {
+  const inv = await call(env, "POST", "/v1/admin/invites", { key: by, body: { name, kind: "server_agent", role: "admin", policy } });
+  assert.equal(inv.status, 201);
+  assert.equal(inv.json.role, "member"); // an agent can never be invited as admin
+  const s = signer();
+  const j = await call(env, "POST", "/v1/join", { body: { code: inv.json.code, pubkey: s.pubkey } });
+  assert.equal(j.status, 201);
+  return { ...j.json, s };
+};
+
+test("server agent: kind and default policy; DMs only to admins; no topics; must have a signing key", async () => {
+  const env = mk();
+  const boss = await addMember(env, "Boss", "admin"), ada = await addMember(env, "Ada");
+  const ag = await agentInvite(env, "Srv1");
+  assert.equal(ag.kind, "server_agent");
+  assert.equal((await call(env, "GET", "/v1/me", { key: ag.key })).json.kind, "server_agent");
+  const toBoss = signMessage(ag.s, ag.id, dmTarget(boss.id), "deploy done");
+  assert.equal((await call(env, "POST", "/v1/messages", { key: ag.key, body: { to: "Boss", ...toBoss } })).status, 201);
+  const toAda = signMessage(ag.s, ag.id, dmTarget(ada.id), "hi");
+  assert.equal((await call(env, "POST", "/v1/messages", { key: ag.key, body: { to: "Ada", ...toAda } })).status, 403);
+  assert.equal((await call(env, "POST", "/v1/topics", { key: ag.key, body: { title: "x" } })).status, 403);
+  // an agent that never registered a key cannot send at all
+  env.DB.raw.exec("UPDATE invites SET created_at = 1"); // lift the invite rate limit
+  const inv2 = await call(env, "POST", "/v1/admin/invites", { key: ADMIN, body: { name: "Srv2", kind: "server_agent" } });
+  const j2 = await call(env, "POST", "/v1/join", { body: { code: inv2.json.code } });
+  assert.equal((await call(env, "POST", "/v1/messages", { key: j2.json.key, body: { to: "Boss", body: "unsigned" } })).status, 403);
+});
+
+test("server agent: allowlist, rate limit and size are enforced by the server", async () => {
+  const env = mk();
+  const ada = await addMember(env, "Ada"), bob = await addMember(env, "Bob");
+  const ag = await agentInvite(env, "Srv1", { recipients: ["ada"], rate: { max: 2, window_s: 600 }, max_body: 20 });
+  const send = (to, id, text) => call(env, "POST", "/v1/messages", { key: ag.key, body: { to, ...signMessage(ag.s, ag.id, dmTarget(id), text) } });
+  assert.equal((await send("Ada", ada.id, "one")).status, 201);
+  assert.equal((await send("Bob", bob.id, "nope")).status, 403); // not on the allowlist
+  assert.equal((await send("Ada", ada.id, "two")).status, 201);
+  const limited = await send("Ada", ada.id, "three");
+  assert.equal(limited.status, 429);
+  assert.ok(limited.json.retry_after >= 1);
+  env.DB.raw.exec("UPDATE messages SET created_at = 1"); // window passes
+  assert.equal((await send("Ada", ada.id, "x".repeat(21))).status, 413);
+  assert.equal((await send("Ada", ada.id, "ok again")).status, 201);
+});
+
+test("server agent: policy is admin-editable; humans are unaffected", async () => {
+  const env = mk();
+  const ada = await addMember(env, "Ada"), bob = await addMember(env, "Bob");
+  const ag = await agentInvite(env, "Srv1");
+  assert.equal((await call(env, "POST", "/v1/admin/members/Ada/policy", { key: ADMIN, body: { recipients: ["bob"] } })).status, 404); // humans have no policy
+  const set = await call(env, "POST", "/v1/admin/members/Srv1/policy", { key: ADMIN, body: { recipients: ["Bob"], rate: { max: 5, window_s: 60 } } });
+  assert.equal(set.status, 200);
+  assert.deepEqual(set.json.policy.recipients, ["bob"]);
+  const m = signMessage(ag.s, ag.id, dmTarget(bob.id), "hello");
+  assert.equal((await call(env, "POST", "/v1/messages", { key: ag.key, body: { to: "Bob", ...m } })).status, 201);
+  for (let i = 0; i < 30; i++) // humans have no agent rate limit
+    assert.equal((await call(env, "POST", "/v1/messages", { key: ada.key, body: { to: "Bob", body: "m" + i } })).status, 201);
+});
+
+test("server agent: private topics and public topic posts follow policy", async () => {
+  const env = mk();
+  const ada = await addMember(env, "Ada");
+  const ag = await agentInvite(env, "Srv1");
+  const t = await call(env, "POST", "/v1/topics", { key: ada.key, body: { title: "Ops" } });
+  const post = (text) => call(env, "POST", `/v1/topics/${t.json.id}/messages`, { key: ag.key, body: signMessage(ag.s, ag.id, topicTarget(t.json.id), text) });
+  assert.equal((await post("status ok")).status, 201);
+  await call(env, "POST", "/v1/admin/members/Srv1/policy", { key: ADMIN, body: { topics: "none" } });
+  assert.equal((await post("again")).status, 403);
+});
+
+test("signed via/at labels: stored, returned, bound to the signature", async () => {
+  const env = mk();
+  const boss = await addMember(env, "Boss", "admin");
+  const ag = await agentInvite(env, "Srv1");
+  const m = signMessage(ag.s, ag.id, dmTarget(boss.id), "build green", { via: "deploy-bot", at: "vps-1" });
+  assert.equal(m.via, "deploy-bot");
+  assert.equal((await call(env, "POST", "/v1/messages", { key: ag.key, body: { to: "Boss", ...m } })).status, 201);
+  const got = (await call(env, "GET", "/v1/messages", { key: boss.key })).json[0];
+  assert.equal(got.via, "deploy-bot");
+  assert.equal(got.at, "vps-1");
+  assert.equal(verifyMessage(ag.s.pubkey, { ...got, target: dmTarget(boss.id) }), true);
+  assert.equal(verifyMessage(ag.s.pubkey, { ...got, via: "someone-else", target: dmTarget(boss.id) }), false); // label is signed
+  // an attacker or buggy client cannot swap the label after signing
+  const m2 = signMessage(ag.s, ag.id, dmTarget(boss.id), "x", { via: "a" });
+  assert.equal((await call(env, "POST", "/v1/messages", { key: ag.key, body: { to: "Boss", ...m2, via: "b" } })).status, 400);
+  // messages without labels still use the original v1 format
+  const plain = signMessage(ag.s, ag.id, dmTarget(boss.id), "plain");
+  assert.equal(plain.via, undefined);
+  assert.equal((await call(env, "POST", "/v1/messages", { key: ag.key, body: { to: "Boss", ...plain } })).status, 201);
+});
