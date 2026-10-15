@@ -6,11 +6,14 @@ set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 url="${1:?community url}"; code="${2:?invite code}"; label="${3:?machine label}"
 src="$(cd "$(dirname "$0")/.." && pwd)"
-node="$(command -v node)"
+node="$(readlink -f "$(command -v node)")"
 id community-broker >/dev/null 2>&1 || useradd --system --home-dir /var/lib/community-broker --create-home --shell /usr/sbin/nologin community-broker
 getent group community-agents >/dev/null || groupadd --system community-agents
 install -d -o root -g root -m 0755 /opt/community
-rsync -a --delete --exclude .git --exclude node_modules --exclude server --exclude test "$src/" /opt/community/
+case "$node" in /root/*|/home/*) # the broker user cannot execute a node that lives in a private home: ship a copy
+  install -d -m 0755 /opt/community/bin; install -m 0755 "$node" /opt/community/bin/node; node=/opt/community/bin/node;;
+esac
+rsync -a --delete --exclude /bin --exclude .git --exclude node_modules --exclude server --exclude test "$src/" /opt/community/
 cfg=/var/lib/community-broker/config; install -d -o community-broker -g community-broker -m 0700 "$cfg"
 sudo -u community-broker env COMMUNITY_CONFIG_DIR="$cfg" "$node" /opt/community/src/cli.mjs join "$url" "$code"
 printf '{"at":"%s","recipients":null,"rate":{"max":10,"window_s":60},"max_body":2000}\n' "$label" > "$cfg/broker.json"
