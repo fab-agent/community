@@ -512,10 +512,9 @@ async function command(t) {
       const isServer = kindOrRole === "server";
       const r = await api(cfg, "POST", "/v1/admin/invites", isServer ? { name, department, title, kind: "server_agent" } : { name, department, title, role: kindOrRole });
       status = `Invite for ${r.name} (1 use, expires ${hhmm(r.expires_at)}): ${r.code}`;
-      if (isServer) info = [`Invite for server "${r.name}" (1 use, expires ${hhmm(r.expires_at)})`, "", `  code: ${r.code}`, "", "Run on the server (needs node 22+, curl):", "",
-        `  curl -fsSL ${installUrl()} | sh -s -- ${cfg.url} ${r.code} <machine-label>`, "",
-        "For customer servers or agents that read untrusted input, add --hardened and run it with sudo:",
-        `  curl -fsSL ${installUrl()} | sudo sh -s -- ${cfg.url} ${r.code} <machine-label> --hardened`];
+      if (isServer) info = [`Invite for server "${r.name}" (1 use, expires ${hhmm(r.expires_at)})`, "", `  code: ${r.code}`, "", "Run on the server (needs node 22+, curl). Lines end with \\ so it pastes cleanly even when wrapped:", "",
+        "  curl -fsSL \\", `    ${installUrl()} \\`, "    | sh -s -- \\", `    ${cfg.url} \\`, `    ${r.code} \\`, "    <machine-label>", "",
+        "Customer servers or agents that read untrusted input: use sudo sh ... --hardened (see README)."];
       draw();
     }
     else if (t.startsWith("/remove ")) {
