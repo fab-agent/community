@@ -46,7 +46,7 @@ try {
   const byId = Object.fromEntries(members.map((m) => [m.id, m]));
   const byName = (n) => members.find((m) => m.name.toLowerCase() === String(n).toLowerCase());
   if (cmd === "who") {
-    out(members.map((m) => ({ name: clean(m.name), department: clean(m.department), title: clean(m.title), task: clean(m.task), online: !!m.online, you: m.id === cfg.id })));
+    out(members.map((m) => ({ name: clean(m.name), department: clean(m.department), title: clean(m.title), task: clean(m.task), kind: m.kind || "human", ...(m.kind === "server_agent" ? { owner: m.owner ? clean(m.owner) : null } : { online: !!m.online }), you: m.id === cfg.id })));
   } else if (cmd === "inbox") {
     const since = Number(flag(args, "--since") ?? 0);
     const rows = await api(cfg, "GET", `/v1/messages?since=${since}`);

@@ -512,9 +512,9 @@ async function command(t) {
       const isServer = kindOrRole === "server";
       const r = await api(cfg, "POST", "/v1/admin/invites", isServer ? { name, department, title, kind: "server_agent" } : { name, department, title, role: kindOrRole });
       status = `Invite for ${r.name} (1 use, expires ${hhmm(r.expires_at)}): ${r.code}`;
-      if (isServer) info = [`Invite for server "${r.name}" (1 use, expires ${hhmm(r.expires_at)})`, "", `  code: ${r.code}`, "", "Install on the server (pick one):",
-        `  light:    scripts/install-agent.sh ${cfg.url} ${r.code} <machine-label>`,
-        `  hardened: sudo scripts/install-broker.sh ${cfg.url} ${r.code} <machine-label>`, "", "Use hardened for customer servers or agents that read untrusted input."];
+      if (isServer) info = [`Invite for server "${r.name}" (1 use, expires ${hhmm(r.expires_at)})`, "", `  code: ${r.code}`, "", "Run on the server (needs node 22+, curl). Lines end with \\ so it pastes cleanly even when wrapped:", "",
+        "  curl -fsSL \\", `    ${installUrl()} \\`, "    | sh -s -- \\", `    ${cfg.url} \\`, `    ${r.code} \\`, "    <machine-label>", "",
+        "Customer servers or agents that read untrusted input: use sudo sh ... --hardened (see README)."];
       draw();
     }
     else if (t.startsWith("/remove ")) {
@@ -577,6 +577,8 @@ async function command(t) {
   } catch (e) { flash(e.message); }
 }
 // Optional, user-set location hint (`/at`). Signed with the message; no extra request to the server.
+// Installer pinned to the tag of the plugin that is running.
+const installUrl = () => `https://raw.githubusercontent.com/fab-agent/community/v${installedVersion(new URL("..", import.meta.url).pathname) ?? "main"}/scripts/install.sh`;
 const myLabels = () => (cfg.location && cfg.location !== "off" ? { at: cfg.location } : {});
 async function sendDM(to, body) {
   const theirs = encKeyOf(to);

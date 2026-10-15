@@ -10,7 +10,8 @@ src="$(cd "$(dirname "$0")/.." && pwd)"
 node="$(command -v node)" || { echo "node >= 22 is required" >&2; exit 1; }
 share="$HOME/.local/share/fab-community"; cfg="$HOME/.config/fab-community"; bin="$HOME/.local/bin"
 mkdir -p "$share" "$bin"
-rsync -a --delete --exclude .git --exclude node_modules --exclude server --exclude test --exclude docs "$src/" "$share/"
+rm -rf "$share"; mkdir -p "$share"
+tar -C "$src" --exclude=.git --exclude=node_modules --exclude=server --exclude=test --exclude=docs -cf - . | tar -C "$share" -xf -
 printf '#!/bin/sh\nCOMMUNITY_CONFIG_DIR="%s" COMMUNITY_AT="%s" exec "%s" "%s/src/agent.mjs" "$@"\n' "$cfg" "$label" "$node" "$share" > "$bin/community"
 chmod 755 "$bin/community"
 for d in "$HOME/.claude/skills/community" "$HOME/.codex/skills/community"; do

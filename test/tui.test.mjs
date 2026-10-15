@@ -68,14 +68,15 @@ test("remote share preview says remote machine and redacts harder; nothing is se
   } finally { srv.close(); }
 });
 
-test("/invite … | server shows the code and both install commands", { skip: !havePty }, async () => {
+test("/invite … | server shows the code and the one-line install commands", { skip: !havePty }, async () => {
   const { srv, run } = await boot();
   try {
     const screen = lastFrame(await run([[1.2, "/invite Build-box | | | server\r"]], 3.5));
     assert.match(screen, /Invite for server "Build-box"/);
     assert.match(screen, /code: fci_/);
-    assert.match(screen.replace(/\s+/g, ' '), /scripts\/install-agent\.sh http:\/\/127\.0\.0\.1:\d+ fci_\S+ <machine- ?label>/); // long lines wrap, never cut
-    assert.match(screen, /sudo scripts\/install-broker\.sh/);
+    const flat = screen.replace(/\s+/g, " ");
+    assert.match(flat, /curl -fsSL \\ https:\/\/raw\.githubusercontent\.com\/fab-agent\/community\/v\d+\.\d+\.\d+\/scripts\/install\.sh \\ \| sh -s -- \\ http:\/\/127\.0\.0\.1:\d+ \\ fci_\w+ \\ <machine-label>/);
+    assert.match(flat, /--hardened/);
   } finally { srv.close(); }
 });
 
