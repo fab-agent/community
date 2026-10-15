@@ -156,7 +156,7 @@ Herdr 0.9 can show several SSH machines in one TUI (`herdr machine add`). Commun
 
 ```sh
 curl -X POST $URL/v1/admin/invites -H "Authorization: Bearer $ADMIN_KEY" -H 'content-type: application/json' \
-  -d '{"name":"build-box","kind":"server_agent","policy":{"recipients":["admins"],"rate":{"max":20,"window_s":600}}}'
+  -d '{"name":"build-box","kind":"server_agent","policy":{"recipients":"admins","rate":{"max":20,"window_s":600}}}'
 # change it later:
 curl -X POST $URL/v1/admin/members/build-box/policy -H "Authorization: Bearer $ADMIN_KEY" -d '{"recipients":["ayse"]}'
 ```
