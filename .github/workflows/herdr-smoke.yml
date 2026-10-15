@@ -38,10 +38,10 @@ jobs:
           herdr plugin action list | tee "$RUNNER_TEMP/actions.txt"
           grep -q "open" "$RUNNER_TEMP/actions.txt"
           grep -q "pull" "$RUNNER_TEMP/actions.txt"
-      - name: Headless action reaches the plugin
+      - name: Headless action is accepted by Herdr
         run: |
-          # no message has been received yet, so pull.mjs exits 1 by design; what matters is that Herdr ran it
-          herdr plugin action invoke pull --plugin community || true
-          herdr plugin log community | tail -n 20 || true
+          # pull.mjs has nothing to paste in a fresh install and exits 1 by design; what matters is that Herdr accepts and starts it
+          herdr plugin action invoke pull --plugin community | tee "$RUNNER_TEMP/invoke.txt"
+          grep -q plugin_action_invoked "$RUNNER_TEMP/invoke.txt"
       - name: Plugin config dir resolves
         run: test -n "$(herdr plugin config-dir community)"
