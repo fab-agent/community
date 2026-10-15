@@ -75,8 +75,8 @@ test("/invite … | server shows the code and the one-line install commands", { 
     assert.match(screen, /Invite for server "Build-box"/);
     assert.match(screen, /code: fci_/);
     const flat = screen.replace(/\s+/g, " ");
-    assert.match(flat, /curl -fsSL \\ https:\/\/raw\.githubusercontent\.com\/fab-agent\/community\/v\d+\.\d+\.\d+\/scripts\/install\.sh \\ \| sh -s -- \\ http:\/\/127\.0\.0\.1:\d+ \\ fci_\w+ \\ <machine-label>/);
-    assert.match(flat, /--hardened/);
+    assert.match(flat, /curl -fsSL http:\/\/127\.0\.0\.1:\d+\/install\/fci_\w+ \| sh/);
+    assert.match(flat, /\?hardened=1" \| sudo sh/);
   } finally { srv.close(); }
 });
 
@@ -133,3 +133,18 @@ for (const [label, note] of [["flaky", /unavailable: .*unreachable/], ["oldver",
     } finally { srv.close(); }
   });
 }
+
+test("/mouse off persists and stops mouse reporting; /invite copies the install command (OSC 52)", { skip: !havePty }, async () => {
+  const { srv, run, dir } = await boot();
+  try {
+    const raw = await run([[1.2, "/mouse off\r"]], 2.5);
+    assert.equal(JSON.parse(fs.readFileSync(dir + "/config.json", "utf8")).mouse, false);
+    assert.ok(raw.includes("\x1b[?1000l")); // reporting switched off
+    const next = await run([], 1.5); // a fresh start must not turn it back on
+    assert.ok(!next.includes("\x1b[?1000h"));
+    const inv = await run([[1.2, "/invite Box | | | server\r"]], 3.5);
+    const m = inv.match(/\x1b\]52;c;([A-Za-z0-9+/=]+)\x07/);
+    assert.ok(m, "OSC 52 clipboard sequence emitted");
+    assert.match(Buffer.from(m[1], "base64").toString(), /^curl -fsSL http:\/\/127\.0\.0\.1:\d+\/install\/fci_\w+ \| sh$/);
+  } finally { srv.close(); }
+});
