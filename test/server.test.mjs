@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "../server/src/index.js";
+import worker, { INSTALLER_REF } from "../server/src/index.js";
 import { makeDb } from "./d1-shim.mjs";
 
 const ADMIN = "root-admin-key";
@@ -379,4 +379,29 @@ test("server agents: no presence, no last_seen writes; the inviting admin is the
   assert.equal((await call(env, "POST", "/v1/admin/members/Srv2/owner", { key: ADMIN, body: { owner: "Boss" } })).json.owner, "Boss");
   assert.equal((await call(env, "POST", "/v1/admin/members/Ada/owner", { key: ADMIN, body: { owner: "Boss" } })).status, 404); // humans have no owner
   assert.equal((await call(env, "GET", "/v1/members", { key: ada.key })).json.find((m) => m.name === "Srv2").owner, "Boss");
+});
+
+test("short install URL: serves a script for a well-formed code, needs no auth, does not touch the invite", async () => {
+  const env = mk();
+  const inv = await call(env, "POST", "/v1/admin/invites", { key: ADMIN, body: { name: "Srv1", kind: "server_agent" } });
+  const get = (p) => worker.fetch(new Request("https://community.example" + p), env);
+  const r = await get(`/install/${inv.json.code}`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("content-type"), /shellscript/);
+  const body = await r.text();
+  assert.ok(body.includes(`raw.githubusercontent.com/fab-agent/community/${INSTALLER_REF}/scripts/install.sh | sh -s -- 'https://community.example' '${inv.json.code}'`));
+  assert.ok(!body.includes("--hardened"));
+  const hard = await (await get(`/install/${inv.json.code}?hardened=1&label=build-box`)).text();
+  assert.ok(hard.includes(`'build-box' --hardened`));
+  // labels that are not plain are dropped, never put into the shell line
+  const evil = await (await get(`/install/${inv.json.code}?label=${encodeURIComponent("x'; rm -rf /; '")}`)).text();
+  assert.ok(!evil.includes("rm -rf"));
+  // malformed codes are not served
+  for (const bad of ["/install/not-a-code", `/install/${inv.json.code};id`]) {
+    const x = await get(bad);
+    assert.notEqual(x.status, 200); // falls through to member auth, never a script
+    assert.ok(!(await x.text()).includes("#!/bin/sh"));
+  }
+  // the invite is still usable afterwards
+  assert.equal((await call(env, "POST", "/v1/join", { body: { code: inv.json.code } })).status, 201);
 });

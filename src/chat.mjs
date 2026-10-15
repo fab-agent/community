@@ -465,7 +465,7 @@ function helpMenu() {
     ["/to ", "/to <name> [msg]  message someone", 1], ["/task ", "/task <text>  set what you work on", 1],
     ["/rename ", "/rename <new>  change your name", 1], ["/title ", "/title <t>  change your title", 1], ["/dept ", "/dept <d>  change your department", 1],
     ["/topic ", "/topic <title>  new discussion", 1], ["/private ", "/private <title> | a, b  private topic", 1],
-    ["/at ", "/at <label>|off  tag your messages with where you work", 1], ["/archive", "archive this discussion", 0], ["/fp", "safety numbers", 0], ["/pull", "paste last message into a pane", 0],
+    ["/at ", "/at <label>|off  tag your messages with where you work", 1], ["/mouse", "/mouse on|off  off lets you select and copy text", 0], ["/copy", "/copy  copy the last server install command", 0], ["/archive", "archive this discussion", 0], ["/fp", "safety numbers", 0], ["/pull", "paste last message into a pane", 0],
     ...(isAdmin() ? [["/invite Name | Department | Title", "/invite  invite a person, or add | server for a Server Agent (admin)", 1], ["/remove ", "/remove <name>  (admin)", 1]] : []),
     ["/quit", "close", 0],
   ];
@@ -512,9 +512,13 @@ async function command(t) {
       const isServer = kindOrRole === "server";
       const r = await api(cfg, "POST", "/v1/admin/invites", isServer ? { name, department, title, kind: "server_agent" } : { name, department, title, role: kindOrRole });
       status = `Invite for ${r.name} (1 use, expires ${hhmm(r.expires_at)}): ${r.code}`;
-      if (isServer) info = [`Invite for server "${r.name}" (1 use, expires ${hhmm(r.expires_at)})`, "", `  code: ${r.code}`, "", "Run on the server (needs node 22+, curl). Lines end with \\ so it pastes cleanly even when wrapped:", "",
-        "  curl -fsSL \\", `    ${installUrl()} \\`, "    | sh -s -- \\", `    ${cfg.url} \\`, `    ${r.code} \\`, "    <machine-label>", "",
-        "Customer servers or agents that read untrusted input: use sudo sh ... --hardened (see README)."];
+      if (isServer) info = [`Invite for server "${r.name}" (1 use, expires ${hhmm(r.expires_at)})`, "", `  code: ${r.code}`, "", "Run on the server (needs node 22+, curl). One line:", "",
+        `  curl -fsSL ${cfg.url.replace(/\/$/, "")}/install/${r.code} | sh`, "",
+        "Customer servers or agents that read untrusted input (needs root):", "",
+        `  curl -fsSL "${cfg.url.replace(/\/$/, "")}/install/${r.code}?hardened=1" | sudo sh`, "",
+        "The one-line command was copied to your clipboard if your terminal allows it (/copy to repeat).",
+        "Cannot select text? Hold Shift (Option on macOS) while dragging, or run /mouse off."];
+      if (isServer) { lastCopy = `curl -fsSL ${cfg.url.replace(/\/$/, "")}/install/${r.code} | sh`; copyText(lastCopy); }
       draw();
     }
     else if (t.startsWith("/remove ")) {
@@ -556,6 +560,17 @@ async function command(t) {
       const pk = name === cfg.me ? signer.pubkey : m.pubkey;
       flash(pk ? `${name}: ${fingerprint(pk)} — compare with them by voice` : `${name} has no signing key yet`, 15000);
     }
+    else if (t === "/mouse" || t.startsWith("/mouse ")) { // mouse reporting makes the terminal hand clicks to us, which blocks text selection
+      const v = t.slice(6).trim();
+      if (v !== "on" && v !== "off") return flash(`mouse is ${cfg.mouse === false ? "off (you can select and copy text)" : "on (hold Shift, or Option on macOS, to select)"} · /mouse off | on`);
+      cfg.mouse = v === "on"; saveConfig(cfg);
+      out(cfg.mouse ? E + "?1000h" + E + "?1006h" : E + "?1000l" + E + "?1006l");
+      flash(cfg.mouse ? "mouse on: clicks and menus work, hold Shift (Option on macOS) to select text" : "mouse off: select and copy with your terminal as usual (menus by keyboard)");
+    }
+    else if (t === "/copy") {
+      if (!lastCopy) return flash("nothing to copy yet (create an invite first)");
+      copyText(lastCopy); flash("copied to the clipboard (if your terminal allows it)");
+    }
     else if (t === "/at" || t.startsWith("/at ")) {
       const v = t.slice(3).trim();
       if (!v) return flash(cfg.location ? `location label: ${cfg.location} (/at off to remove)` : "no location label (/at <label> to set one)");
@@ -577,8 +592,9 @@ async function command(t) {
   } catch (e) { flash(e.message); }
 }
 // Optional, user-set location hint (`/at`). Signed with the message; no extra request to the server.
-// Installer pinned to the tag of the plugin that is running.
-const installUrl = () => `https://raw.githubusercontent.com/fab-agent/community/v${installedVersion(new URL("..", import.meta.url).pathname) ?? "main"}/scripts/install.sh`;
+// Clipboard through the terminal (OSC 52); works in most modern terminals, silently ignored otherwise.
+let lastCopy = "";
+const copyText = (text) => out("\x1b]52;c;" + Buffer.from(text).toString("base64") + "\x07");
 const myLabels = () => (cfg.location && cfg.location !== "off" ? { at: cfg.location } : {});
 async function sendDM(to, body) {
   const theirs = encKeyOf(to);
@@ -728,7 +744,7 @@ process.stdout.on("resize", draw);
 process.on("exit", () => out(E + "?1000l" + E + "?1006l"));
 
 if (!cfg.id) { try { const me = await api(cfg, "GET", "/v1/me"); cfg.id = me.id; cfg.me = me.name; saveConfig(cfg); } catch {} }
-out(E + "?1049h" + E + "?1000h" + E + "?1006h");
+out(E + "?1049h" + (cfg.mouse === false ? "" : E + "?1000h" + E + "?1006h"));
 // Adaptive polling: fast while you are active, slower when idle (keeps request volume low on free Worker plans).
 // Idle cap stays under the server's 30s presence-write throttle + 90s "online" window.
 let lastActive = Date.now();

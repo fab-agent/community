@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
-import worker from "../server/src/index.js";
+import worker, { INSTALLER_REF } from "../server/src/index.js";
 import { makeDb } from "./d1-shim.mjs";
 import { loadOrCreateSigner, signEncKey } from "../src/sign.mjs";
 
@@ -13,6 +13,10 @@ const ADMIN = "root-admin-key";
 const root = new URL("..", import.meta.url).pathname;
 const VERSION = fs.readFileSync(root + "scripts/install.sh", "utf8").match(/^VERSION="([^"]+)"/m)[1];
 const sh = (cmd, env) => new Promise((res, rej) => execFile("sh", ["-c", cmd], { env: { PATH: process.env.PATH, ...env } }, (e, so, se) => e ? rej(Object.assign(new Error(se || e.message), { stderr: se })) : res(so + se)));
+
+test("the Worker's INSTALLER_REF equals the package version", () => {
+  assert.equal(INSTALLER_REF, "v" + JSON.parse(fs.readFileSync(root + "package.json", "utf8")).version);
+});
 
 test("install.sh VERSION matches the package and plugin manifest (bump all together)", () => {
   assert.equal(VERSION, "v" + JSON.parse(fs.readFileSync(root + "package.json", "utf8")).version);

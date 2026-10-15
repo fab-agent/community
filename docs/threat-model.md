@@ -1,6 +1,6 @@
 # Threat model
 
-What Community protects, against whom, and what it does not. Written to be checked: each claim names the file that implements it. If a claim does not match the code, the code wins and this document is a bug. Version: v0.5.1 (includes Server Agents, see [server-agents.md](server-agents.md)).
+What Community protects, against whom, and what it does not. Written to be checked: each claim names the file that implements it. If a claim does not match the code, the code wins and this document is a bug. Version: v0.5.2 (includes Server Agents, see [server-agents.md](server-agents.md)).
 
 ## Parts and trust
 

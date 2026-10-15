@@ -7,7 +7,7 @@
 # Needs: node >= 22, curl, tar, bash. The release archive is checked against its published sha256 and, when `gh` is
 # available, against its GitHub build attestation.
 set -eu
-VERSION="v0.5.1"
+VERSION="v0.5.2"
 BASE="${COMMUNITY_RELEASE_BASE:-https://github.com/fab-agent/community/releases/download/$VERSION}"
 die() { echo "community install: $*" >&2; exit 1; }
 

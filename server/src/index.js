@@ -3,6 +3,8 @@
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 const err = (status, message) => json({ error: message }, status);
+// Release tag whose installer the short install URL runs. Bumped with every release (a test keeps it equal to package.json).
+export const INSTALLER_REF = "v0.5.2";
 
 const sha256 = async (s) => {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -149,6 +151,21 @@ export default {
     const path = url.pathname;
     const now = Date.now();
 
+    // ---- one short install URL per invite:  curl -fsSL <this server>/install/<code> | sh  ----
+    // Serves a tiny script that runs the pinned installer with this server's address and the invite code.
+    // It only reads the URL: the invite is not consumed here, and no DB access happens.
+    const inst = path.match(/^\/install\/(fci_[A-Za-z0-9]{8,64})$/);
+    if (inst && req.method === "GET") {
+      const label = /^[A-Za-z0-9._-]{1,40}$/.test(url.searchParams.get("label") ?? "") ? url.searchParams.get("label") : "";
+      const hardened = url.searchParams.get("hardened") === "1";
+      const args = [url.origin, inst[1], label].filter(Boolean).map((a) => `'${a}'`).join(" ") + (hardened ? " --hardened" : "");
+      return new Response(`#!/bin/sh
+# Community server installer for ${url.origin}. It runs the pinned installer from GitHub (${INSTALLER_REF}):
+# https://github.com/fab-agent/community/blob/${INSTALLER_REF}/scripts/install.sh
+set -eu
+curl -fsSL https://raw.githubusercontent.com/fab-agent/community/${INSTALLER_REF}/scripts/install.sh | sh -s -- ${args}
+`, { status: 200, headers: { "content-type": "text/x-shellscript; charset=utf-8", "cache-control": "no-store" } });
+    }
     if (path === "/" || path === "/v1/community")
       return json({
         name: env.COMMUNITY_NAME || "community", api: "v1",
