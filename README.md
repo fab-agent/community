@@ -239,10 +239,12 @@ Fresh installs use `schema.sql`. If you deployed an earlier version, apply the m
 ```sh
 npx wrangler d1 execute community --remote --file=migrations/0003_topics_signatures.sql   # discussions + signatures
 npx wrangler d1 execute community --remote --file=migrations/0004_private_topics_e2ee.sql  # encryption keys + private topics
+npx wrangler d1 execute community --remote --file=migrations/0005_server_agents.sql        # server agents, via/at labels
+npx wrangler d1 execute community --remote --file=migrations/0006_server_owner.sql         # owner of a server agent
 npx wrangler deploy
 ```
 
-Old clients keep working (members without a signing key can still send unsigned messages) but see `·` instead of `✓`.
+Old clients keep working (members without a signing key can still send unsigned messages) but see `·` instead of `✓`. Messages that carry `via` / `at` labels (from Server Agents, or from people who use `/at`) use the `community/v2` signature, so clients older than v0.5 cannot verify them and show them as unverified; update the plugin.
 
 ### Configuration and retention
 
@@ -312,7 +314,7 @@ Direct messages and private topics are **end-to-end encrypted**, and all message
 
 ## Verifying a release
 
-Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.4.1.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
+Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.5.0.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
 
 ## Roadmap
 
