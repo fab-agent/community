@@ -40,3 +40,41 @@ test("agent CLI: encrypted DM round trip, verified, untrusted-labelled", async (
     await assert.rejects(cliAsync(ada, "send", "Nobody", "x"));
   } finally { srv.close(); }
 });
+
+test("headless server agent: join without Herdr, send with signed via/at labels, policy blocks others", async () => {
+  const env = { DB: makeDb(), ADMIN_KEY: ADMIN, COMMUNITY_NAME: "t" };
+  const srv = http.createServer(async (rq, rs) => {
+    const chunks = []; for await (const c of rq) chunks.push(c);
+    const r = await worker.fetch(new Request("http://x" + rq.url, { method: rq.method, headers: rq.headers, body: chunks.length ? Buffer.concat(chunks) : undefined }), env);
+    rs.writeHead(r.status, { "content-type": "application/json" }); rs.end(await r.text());
+  }).listen(0);
+  await new Promise((r) => srv.on("listening", r));
+  const url = `http://127.0.0.1:${srv.address().port}`;
+  const post = (p, key, body) => fetch(url + p, { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    const mkMember = async (name, role) => {
+      const m = await (await post("/v1/admin/members", ADMIN, { name, role })).json();
+      const dir = fs.mkdtempSync(os.tmpdir() + "/c"); const s = loadOrCreateSigner(dir);
+      fs.writeFileSync(dir + "/config.json", JSON.stringify({ url, key: m.key, id: m.id, me: name }));
+      assert.equal((await post("/v1/me/key", m.key, { pubkey: s.pubkey, enc_pubkey: s.encPub, enc_sig: signEncKey(s, m.id) })).status, 200);
+      return dir;
+    };
+    const boss = await mkMember("Boss", "admin"), ada = await mkMember("Ada", "member");
+    const inv = await (await post("/v1/admin/invites", ADMIN, { name: "Srv1", kind: "server_agent" })).json();
+    const dir = fs.mkdtempSync(os.tmpdir() + "/agent"); // no Herdr env, no herdr binary
+    const run = (d, ...a) => new Promise((res, rej) => import("node:child_process").then(({ execFile }) =>
+      execFile("node", ["src/cli.mjs", ...a], { env: { PATH: process.env.PATH, HOME: d, COMMUNITY_CONFIG_DIR: d, HERDR_BIN_PATH: "/nonexistent/herdr" } }, (e, so, se) => e ? rej(new Error(se || e.message)) : res(so))));
+    const joined = JSON.parse(await run(dir, "join", url, inv.code));
+    assert.equal(joined.kind, "server_agent");
+    assert.equal(joined.config_dir, dir);
+    await run(dir, "send", "Boss", "build green", "--via", "deploy-bot", "--at", "vps-1");
+    const got = JSON.parse(await cliAsync(boss, "inbox")).messages[0];
+    assert.equal(got.text, "build green");
+    assert.equal(got.signature, "verified");
+    assert.equal(got.via, "deploy-bot");
+    assert.equal(got.location, "vps-1");
+    assert.equal(got.from, "Srv1");
+    await assert.rejects(run(dir, "send", "Ada", "not allowed"), /not allowed/);
+    assert.equal(JSON.parse(await cliAsync(ada, "inbox")).messages.length, 0);
+  } finally { srv.close(); }
+});

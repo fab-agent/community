@@ -5,9 +5,14 @@ import { execFileSync } from "node:child_process";
 const PLUGIN_ID = "community";
 export const herdrBin = () => process.env.HERDR_BIN_PATH || "herdr";
 
+// Order: COMMUNITY_CONFIG_DIR, Herdr's plugin env, `herdr plugin config-dir`, then ~/.config/fab-community
+// (headless servers need neither Herdr nor the plugin).
 export function configDir() {
-  const d = process.env.HERDR_PLUGIN_CONFIG_DIR ||
-    execFileSync(herdrBin(), ["plugin", "config-dir", PLUGIN_ID], { encoding: "utf8" }).trim();
+  let d = process.env.COMMUNITY_CONFIG_DIR || process.env.HERDR_PLUGIN_CONFIG_DIR;
+  if (!d) {
+    try { d = execFileSync(herdrBin(), ["plugin", "config-dir", PLUGIN_ID], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch {}
+  }
+  if (!d) d = path.join(process.env.HOME || ".", ".config", "fab-community");
   fs.mkdirSync(d, { recursive: true, mode: 0o700 });
   return d;
 }

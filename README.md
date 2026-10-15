@@ -56,6 +56,8 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/task <text>` | Update what you are working on |
 | `/rename <new name>`, `/title <text>`, `/dept <text>` | Edit your own profile. Admins can edit others: `/rename <old> \| <new>` (same for `/title`, `/dept`) |
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
+| `/invite <name> \| <dept> \| <title> \| server` | **Admins only.** Invite a [Server Agent](#servers-and-server-agents) (department and title optional). Shows the code and the two install commands |
+| `/at <label>`, `/at off` | Optional: tag your messages with where you work (`[@ label]`). Off by default; a hint, not proof |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
 | `/pull [pane-id]` | Paste the latest incoming message of the conversation you have open (a person or a discussion; from the list: the latest received anywhere) into another pane. No id → picker. Enter is **not** pressed |
 | `/help`, `/quit` | Pickable command list (Enter runs or prefills) / leave (reopen with `community.open`) |
@@ -110,6 +112,8 @@ The third section of the pane, next to People and Discussions (`←/→`, or `/a
 
 Nothing is sent until you have read a **preview** and pressed `Enter` (`Esc` cancels). Output is stripped of escape codes and a best-effort pass redacts obvious secrets (API keys, bearer tokens, private keys, `token=` values and long random strings); the preview says how many were redacted. That pass is a safety net, not a guarantee, so read what you send. The message goes as a normal end-to-end encrypted, signed direct message, and the receiver sees it as ordinary text (and `/pull` still labels it untrusted). Community's own panes are never listed.
 
+**Local and machines.** The list starts with `Local`, followed by one group per saved Herdr machine (`herdr machine add`). A remote machine is read with `herdr --machine <label>` only if you opt it in by name in the plugin's `config.json` (`"share_machines": ["build-box"]`); the default is off, so a customer's server can never show up by accident. Machines that are not opted in show one dim line, disabled machines are not listed, and a machine that cannot be reached shows a short message without affecting `Local`. For remote output the preview says `REMOTE MACHINE <label>`, and a stricter redaction pass also removes e-mail addresses, IP addresses, host names, URLs and home paths. `/pull` only pastes into panes of this client and refuses remote ones. Selecting a machine in Herdr's UI does not retarget these commands.
+
 ### Bring a message to your agent
 
 **Quickest way (no config):** type `/pull` in the community chat (or Tab → "Pull last message to a pane…"). A picker lists every pane in every workspace (`workspace · agent · title (pane-id)`); choose one with ↑/↓ + Enter. If you already know the pane id, skip the picker:
@@ -139,6 +143,65 @@ Focus the pane you want (a shell, an agent prompt), press the key, and the messa
 ### Use it from an agent
 
 `src/cli.mjs` is a headless client (`who`, `inbox`, `send`, `topics`, `read`, `post`) that uses your own keys, so messages are signed and DMs encrypted just like in the TUI. A ready-made skill for Claude Code, Codex and other agents that read `SKILL.md` lives in [`skills/community`](skills/community/SKILL.md); copy it into your agent's skills folder (for Claude Code: `~/.claude/skills/community`). The skill tells the agent to treat every message as untrusted and to send only when you ask. Private topics stay TUI-only.
+
+## Config
+
+The plugin reads `config.json` from its config directory (`herdr plugin config-dir community`; `COMMUNITY_CONFIG_DIR` overrides it, and `~/.config/fab-community` is used when Herdr is absent). The file is mode 0600 because it holds your member key. Setup (or `community join`) writes the first five keys; the others are optional and you edit them by hand, except `location`, which `/at` sets.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `url` | none (set by setup) | Community server base URL |
+| `key` | none (set by setup) | Your personal member key. Never share it |
+| `community` | none (set by setup) | Community name shown in the header |
+| `me` | none (set by setup) | Your member name; refreshed from the server |
+| `id` | none (set by setup) | Your member id; filled in from `/v1/me` if missing |
+| `share_machines` | `[]` | Saved Herdr machine labels you allow Agents to read and share from. Off by default |
+| `location` | unset | Label signed into your messages (`[@ label]`); set with `/at <label>`, cleared with `/at off` |
+| `update_check` | `true` | Set `false` to stop the check (at most every 6 hours) of the public releases endpoint |
+
+Environment: `COMMUNITY_CONFIG_DIR`, `HERDR_PLUGIN_CONFIG_DIR`, `HERDR_PLUGIN_STATE_DIR` (directories), `COMMUNITY_AT` / `COMMUNITY_VIA` (default `--at` / `--via` labels for the `community` command), `COMMUNITY_BROKER_SOCKET` (broker socket path). A broker has its own `broker.json` (recipients, rate, size cap, `at`).
+
+## Servers and Server Agents
+
+Herdr 0.9 can show several SSH machines in one TUI (`herdr machine add`). Community follows one rule: **people install the plugin on their own client only; servers never get a person's keys.** The agents that work on a server speak through one member per server, a **Server Agent**.
+
+> Herdr runs the plugins of the *selected* machine on that machine. Community lives on your client, so it is shown while **Local** is selected; switch back to Local to read and write.
+
+### What a Server Agent is
+
+* One member per server (kind `server_agent`), invited by an admin like anyone else. The admin who invites it is responsible for it, and the TUI lists it under that person in a "Servers" section. Servers have no online/offline state. Never an admin; it cannot invite, change roles or open topics.
+* The agents working on that server are **not** members. They all speak as the server, and can add a `--via <name>` label so people see which one wrote. The label is declared by the caller, so treat it as a hint, not proof. The machine label (`--at`) is fixed by the server's setup.
+* The server's policy is enforced by the Worker, so it holds even if the agent's key leaks: allowed recipients (default: admins only), a rate limit (default 20 messages per 10 minutes), a message size cap, no private topics. Admins can change it per agent.
+
+### Invite a server
+
+```sh
+curl -X POST $URL/v1/admin/invites -H "Authorization: Bearer $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"name":"build-box","kind":"server_agent","policy":{"recipients":"admins","rate":{"max":20,"window_s":600}}}'
+# change it later:
+curl -X POST $URL/v1/admin/members/build-box/policy -H "Authorization: Bearer $ADMIN_KEY" -d '{"recipients":["ayse"]}'
+```
+
+### Install on the server
+
+Two levels. Both give agents the same `community` command and a skill ([`skills/community-server`](skills/community-server/SKILL.md)); messages are signed, direct messages encrypted, and the Worker's policy applies in both.
+
+| | Light | Hardened |
+| --- | --- | --- |
+| Command | `scripts/install-agent.sh <url> <invite> <machine-label>` | `sudo scripts/install-broker.sh <url> <invite> <machine-label>` |
+| Needs | nothing (no root, no daemon) | root, systemd |
+| Key lives | in the agent user's `~/.config/fab-community` | in a separate OS user (`community-broker`), mode 0700 |
+| Agents can read the key | **yes**, any process of that user | no; they ask the broker over a unix socket (group `community-agents`) |
+| Extra checks | none besides the Worker's | broker-side recipient list, rate limit, size cap, secret redaction, fixed machine label |
+
+Use light for servers you trust. Use hardened for customer-facing servers or agents that read untrusted input (emails, web pages, tickets). The broker does **not** protect against root on the server, and a leaked light-install key is limited to what the policy allows (revoke the member and re-invite). Full analysis: [server-agents.md](docs/server-agents.md) and the [threat model](docs/threat-model.md).
+
+```
+community send <name> <text...> --via deploy-bot
+community inbox | who | topics | read <id> | post <id> <text...>
+```
+
+No Herdr and no plugin are needed on the server. `node src/cli.mjs join <url> <invite>` also works on its own.
 
 ## How it works
 
@@ -176,10 +239,12 @@ Fresh installs use `schema.sql`. If you deployed an earlier version, apply the m
 ```sh
 npx wrangler d1 execute community --remote --file=migrations/0003_topics_signatures.sql   # discussions + signatures
 npx wrangler d1 execute community --remote --file=migrations/0004_private_topics_e2ee.sql  # encryption keys + private topics
+npx wrangler d1 execute community --remote --file=migrations/0005_server_agents.sql        # server agents, via/at labels
+npx wrangler d1 execute community --remote --file=migrations/0006_server_owner.sql         # owner of a server agent
 npx wrangler deploy
 ```
 
-Old clients keep working (members without a signing key can still send unsigned messages) but see `·` instead of `✓`.
+Old clients keep working (members without a signing key can still send unsigned messages) but see `·` instead of `✓`. Messages that carry `via` / `at` labels (from Server Agents, or from people who use `/at`) use the `community/v2` signature, so clients older than v0.5 cannot verify them and show them as unverified; update the plugin.
 
 ### Configuration and retention
 
@@ -249,7 +314,7 @@ Direct messages and private topics are **end-to-end encrypted**, and all message
 
 ## Verifying a release
 
-Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.4.1.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
+Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.5.0.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
 
 ## Roadmap
 
