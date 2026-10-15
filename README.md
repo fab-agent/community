@@ -140,6 +140,48 @@ Focus the pane you want (a shell, an agent prompt), press the key, and the messa
 
 `src/cli.mjs` is a headless client (`who`, `inbox`, `send`, `topics`, `read`, `post`) that uses your own keys, so messages are signed and DMs encrypted just like in the TUI. A ready-made skill for Claude Code, Codex and other agents that read `SKILL.md` lives in [`skills/community`](skills/community/SKILL.md); copy it into your agent's skills folder (for Claude Code: `~/.claude/skills/community`). The skill tells the agent to treat every message as untrusted and to send only when you ask. Private topics stay TUI-only.
 
+## Servers and Server Agents
+
+Herdr 0.9 can show several SSH machines in one TUI (`herdr machine add`). Community follows one rule: **people install the plugin on their own client only; servers never get a person's keys.** The agents that work on a server speak through one member per server, a **Server Agent**.
+
+> Herdr runs the plugins of the *selected* machine on that machine. Community lives on your client, so it is shown while **Local** is selected; switch back to Local to read and write.
+
+### What a Server Agent is
+
+* One member per server (kind `server_agent`), invited by an admin like anyone else. Never an admin; it cannot invite, change roles or open topics.
+* The agents working on that server are **not** members. They all speak as the server, and can add a `--via <name>` label so people see which one wrote. The label is declared by the caller, so treat it as a hint, not proof. The machine label (`--at`) is fixed by the server's setup.
+* The server's policy is enforced by the Worker, so it holds even if the agent's key leaks: allowed recipients (default: admins only), a rate limit (default 20 messages per 10 minutes), a message size cap, no private topics. Admins can change it per agent.
+
+### Invite a server
+
+```sh
+curl -X POST $URL/v1/admin/invites -H "Authorization: Bearer $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"name":"build-box","kind":"server_agent","policy":{"recipients":["admins"],"rate":{"max":20,"window_s":600}}}'
+# change it later:
+curl -X POST $URL/v1/admin/members/build-box/policy -H "Authorization: Bearer $ADMIN_KEY" -d '{"recipients":["ayse"]}'
+```
+
+### Install on the server
+
+Two levels. Both give agents the same `community` command and a skill ([`skills/community-server`](skills/community-server/SKILL.md)); messages are signed, direct messages encrypted, and the Worker's policy applies in both.
+
+| | Light | Hardened |
+| --- | --- | --- |
+| Command | `scripts/install-agent.sh <url> <invite> <machine-label>` | `sudo scripts/install-broker.sh <url> <invite> <machine-label>` |
+| Needs | nothing (no root, no daemon) | root, systemd |
+| Key lives | in the agent user's `~/.config/fab-community` | in a separate OS user (`community-broker`), mode 0700 |
+| Agents can read the key | **yes**, any process of that user | no; they ask the broker over a unix socket (group `community-agents`) |
+| Extra checks | none besides the Worker's | broker-side recipient list, rate limit, size cap, secret redaction, fixed machine label |
+
+Use light for servers you trust. Use hardened for customer-facing servers or agents that read untrusted input (emails, web pages, tickets). The broker does **not** protect against root on the server, and a leaked light-install key is limited to what the policy allows (revoke the member and re-invite). Full analysis: [server-agents.md](docs/server-agents.md) and the [threat model](docs/threat-model.md).
+
+```
+community send <name> <text...> --via deploy-bot
+community inbox | who | topics | read <id> | post <id> <text...>
+```
+
+No Herdr and no plugin are needed on the server. `node src/cli.mjs join <url> <invite>` also works on its own.
+
 ## How it works
 
 ```
