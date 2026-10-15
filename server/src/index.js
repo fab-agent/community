@@ -4,7 +4,7 @@ const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 const err = (status, message) => json({ error: message }, status);
 // Release tag whose installer the short install URL runs. Bumped with every release (a test keeps it equal to package.json).
-export const INSTALLER_REF = "v0.5.2";
+export const INSTALLER_REF = "v0.5.3";
 
 const sha256 = async (s) => {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));

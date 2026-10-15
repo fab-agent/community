@@ -3,6 +3,7 @@
 import { loadConfig, saveConfig, api, readJson, writeJson, herdr, clean, oneLine, configDir } from "./lib.mjs";
 import { checkUpdate, installedVersion } from "./update.mjs";
 import { loadOrCreateSigner, signMessage, verdict, fingerprint, dmTarget, topicTarget, checkPin, signEncKey, verifyEncKey, signBytes, verifyBytes, canonBody, clipLabel } from "./sign.mjs";
+import { isWide, splitWidth, clampSplit, onDivider, dragTo, filterTopics } from "./layout.mjs";
 import { listAgents, agentCard, outputExcerpt, outputMessage, planMachines, agentRows, pullTarget } from "./share.mjs";
 import { sealDM, openDM, newTopicKey, wrapKey, unwrapKey, sealTopicText, openTopicText, bundleCanonical, bundleCanonicalH, sha256hex, DM_PREFIX, TOPIC_PREFIX } from "./e2ee.mjs";
 
@@ -37,7 +38,8 @@ let agents = [], agentGroups = [], selAgent = null, atop = 0;
 let info = null;              // string[] shown in the main area until Esc (invite codes, install commands)
 let preview = null;           // { to, text, note } — nothing about an agent leaves this machine until you press Enter here
 let topics = [], tmsgs = {}, tsince = {}, selTopic = null, tunread = {};
-let view = "list";            // "list" | "chat" (chat = one person or one topic, by section)
+let view = "list";            // "list" | "chat" (chat = one person or one topic, by section); wide screens show both, view = which one has focus
+let filterQ = "", dragging = false;   // Discussions title filter (/find), divider drag in progress
 const signer = loadOrCreateSigner(configDir());
 const pins = readJson("pins.json", {});
 const tkeys = {};             // private topic id -> topic key (Buffer), only after the creator's signature checked out
@@ -53,6 +55,27 @@ let menu = null;              // { x, y, items:[{label, run}] }
 const unread = {};
 const meRec = () => members.find((m) => m.name === cfg.me);
 const isAdmin = () => meRec()?.role === "admin";
+
+// ---------- split layout ----------
+// Wide terminals show the list and the open conversation side by side (one process, one polling loop).
+const cols = () => process.stdout.columns || 80;
+const wideNow = () => isWide(cols()) && section !== "agents";
+const convVisible = () => view === "chat" || wideNow();
+const listWidth = () => splitWidth(cols(), cfg.split);
+const activeFilter = () => (section === "topics" ? (input.startsWith("/find ") ? input.slice(6) : filterQ) : "");
+const visibleTopics = () => filterTopics(topics, activeFilter());
+const padTo = (s, w) => { const f = fit(s, w); return f + " ".repeat(Math.max(0, w - strip(f).length)); };
+// A selection that the filter hides moves to the first match.
+function keepTopicSelection() {
+  const vt = visibleTopics();
+  if (vt.length && !vt.some((t) => t.id === selTopic)) selTopic = vt[0].id;
+  return vt;
+}
+// What you are looking at counts as read.
+function seen() {
+  if (!convVisible()) return;
+  if (section === "topics") { if (selTopic != null) tunread[selTopic] = 0; } else if (selName) unread[selName] = 0;
+}
 
 // ---------- rows ----------
 function listRows() {
@@ -144,6 +167,53 @@ function chatLines(w, list, targetOf) {
   return lines;
 }
 
+// ---------- panes (used full width on narrow screens, side by side on wide ones) ----------
+function peopleList(w, h) {
+  const rows = [], all = listRows();
+  const sIdx = all.findIndex((r) => r.m && r.m.name === selName);
+  if (sIdx >= 0) { if (sIdx < top) top = sIdx; if (sIdx >= top + h) top = sIdx - h + 1; }
+  top = Math.max(0, Math.min(top, Math.max(0, all.length - h)));
+  for (let i = 0; i < h; i++) {
+    const r = all[top + i];
+    rows.push(!r ? "" : r.head ? `${S.b}${r.head}${S.r}` : memberLine(r.m, r.m.name === selName, w));
+  }
+  return rows;
+}
+function topicsList(w, h, compact) {
+  const rows = [], vt = keepTopicSelection();
+  if (selTopic == null && vt.length) selTopic = vt[0].id;
+  const i = Math.max(0, vt.findIndex((t) => t.id === selTopic));
+  if (i < ttop) ttop = i; if (i >= ttop + h) ttop = i - h + 1;
+  ttop = Math.max(0, Math.min(ttop, Math.max(0, vt.length - h)));
+  if (!topics.length) rows.push(S.dim + " No discussions yet — start one with /topic <title>" + S.r);
+  else if (!vt.length) rows.push(S.dim + ` No discussion matches “${activeFilter().trim()}”` + S.r);
+  for (let j = 0; j < h && vt[ttop + j]; j++) {
+    const t = vt[ttop + j], n = tunread[t.id] ? S.y + ` (${tunread[t.id]})` + S.r : "";
+    const l = fit(` ${t.private ? "🔒" : "#"} ${t.title}${t.archived ? S.dim + " [archived]" : ""}${S.r}${n}${compact ? "" : S.dim + ` · ${t.messages} msg · ${t.created_by ?? "?"}` + S.r}`, w);
+    rows.push(t.id === selTopic ? S.inv + strip(l).padEnd(w).slice(0, w) + S.r : l);
+  }
+  return rows;
+}
+// The open conversation. `titled` adds a heading row (wide layout; narrow screens show the name in the top bar).
+function convPane(w, h, titled) {
+  const topic = section === "topics" ? topics.find((t) => t.id === selTopic) : null;
+  const rows = [];
+  if (titled) {
+    const name = section === "topics" ? (topic ? (topic.private ? "🔒 " : "# ") + topic.title : "") : selName || "";
+    rows.push(name ? ` ${S.c}${name}${S.r}${S.dim}${section === "topics" && topic?.private && topic.names ? " · " + topic.names.join(", ") : ""}${S.r}` : S.dim + " Select someone or a discussion" + S.r);
+    h -= 1;
+  }
+  const all = section === "topics"
+    ? chatLines(w, tmsgs[selTopic] || [], () => topicTarget(selTopic))
+    : chatLines(w, msgs.filter((x) => x.from_name === selName || x.to_name === selName), (m) => dmTarget(m.to_id));
+  const maxUp = Math.max(0, all.length - h);
+  cscroll = Math.max(0, Math.min(cscroll, maxUp));
+  const end = all.length - cscroll, start = Math.max(0, end - h);
+  const slice = all.slice(start, end);
+  while (slice.length < h) slice.unshift("");
+  return [...rows, ...slice];
+}
+
 // ---------- drawing ----------
 function draw() {
   const W = process.stdout.columns || 80, H = process.stdout.rows || 24;
@@ -152,7 +222,7 @@ function draw() {
   const line = (s) => (buf += E + "2K" + s + "\r\n");
 
   line(fit(`${S.b}▣ ${cfg.community}${S.r} ${S.dim}— ${cfg.me}${isAdmin() ? " ★ admin" : ""}${S.r}` +
-    (view === "chat" ? `  ${S.c}${section === "topics" ? (topics.find((t) => t.id === selTopic)?.private ? "🔒 " : "# ") + (topics.find((t) => t.id === selTopic)?.title ?? "") : selName}${S.r}${S.dim}${section === "topics" ? (topics.find((t) => t.id === selTopic)?.private ? " · end-to-end encrypted · " + (topics.find((t) => t.id === selTopic)?.names || []).join(", ") : "") : (encKeyOf(members.find((m) => m.name === selName)) ? " 🔒 end-to-end encrypted" : " ⚠ no encryption key yet")}  (Esc: back)${S.r}`
+    (view === "chat" && !wideNow() ? `  ${S.c}${section === "topics" ? (topics.find((t) => t.id === selTopic)?.private ? "🔒 " : "# ") + (topics.find((t) => t.id === selTopic)?.title ?? "") : selName}${S.r}${S.dim}${section === "topics" ? (topics.find((t) => t.id === selTopic)?.private ? " · end-to-end encrypted · " + (topics.find((t) => t.id === selTopic)?.names || []).join(", ") : "") : (encKeyOf(members.find((m) => m.name === selName)) ? " 🔒 end-to-end encrypted" : " ⚠ no encryption key yet")}  (Esc: back)${S.r}`
       : `  ${section === "people" ? S.inv + " People " + S.r : S.dim + " People " + S.r}${section === "topics" ? S.inv + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" : "") + " " + S.r : S.dim + " Discussions" + (Object.values(tunread).reduce((a, b) => a + b, 0) ? S.y + " (" + Object.values(tunread).reduce((a, b) => a + b, 0) + ")" + S.dim : "") + " " + S.r}${section === "agents" ? S.inv + " Agents " + S.r : S.dim + " Agents " + S.r}${S.dim}  ←/→${S.r}`), W));
 
   const rows = [];
@@ -182,41 +252,24 @@ function draw() {
       const l = fit(` ${dot[a.status] || S.dim + "·"}${S.r} ${a.workspace} ${S.dim}· ${a.agent} · ${a.status}${a.title ? " · " + a.title : ""}${S.r}`, W);
       rows.push(a.key === selAgent ? S.inv + strip(l).padEnd(W).slice(0, W) + S.r : l);
     }
+  } else if (wideNow()) {
+    const L = listWidth(), R = cols() - L - 1;
+    const left = section === "topics" ? topicsList(L, h, true) : peopleList(L, h);
+    const right = convPane(R, h, true);
+    for (let i = 0; i < h; i++) rows.push(padTo(left[i] ?? "", L) + S.dim + "│" + S.r + padTo(right[i] ?? "", R));
   } else if (view === "list" && section === "topics") {
-    if (selTopic == null && topics.length) selTopic = topics[0].id;
-    const i = Math.max(0, topics.findIndex((t) => t.id === selTopic));
-    if (i < ttop) ttop = i; if (i >= ttop + h) ttop = i - h + 1;
-    ttop = Math.max(0, Math.min(ttop, Math.max(0, topics.length - h)));
-    if (!topics.length) rows.push(S.dim + " No discussions yet — start one with /topic <title>" + S.r);
-    for (let j = 0; j < h && topics[ttop + j]; j++) {
-      const t = topics[ttop + j], n = tunread[t.id] ? S.y + ` (${tunread[t.id]})` + S.r : "";
-      const l = fit(` ${t.private ? "🔒" : "#"} ${t.title}${t.archived ? S.dim + " [archived]" : ""}${S.r}${n}${S.dim} · ${t.messages} msg · ${t.created_by ?? "?"}${S.r}`, W);
-      rows.push(t.id === selTopic ? S.inv + strip(l).padEnd(W).slice(0, W) + S.r : l);
-    }
+    rows.push(...topicsList(W, h, false));
   } else if (view === "list") {
-    const all = listRows();
-    const sIdx = all.findIndex((r) => r.m && r.m.name === selName);
-    if (sIdx >= 0) { if (sIdx < top) top = sIdx; if (sIdx >= top + h) top = sIdx - h + 1; }
-    top = Math.max(0, Math.min(top, Math.max(0, all.length - h)));
-    for (let i = 0; i < h; i++) {
-      const r = all[top + i];
-      rows.push(!r ? "" : r.head ? `${S.b}${r.head}${S.r}` : memberLine(r.m, r.m.name === selName, W));
-    }
+    rows.push(...peopleList(W, h));
   } else {
-    const all = section === "topics"
-      ? chatLines(W, tmsgs[selTopic] || [], () => topicTarget(selTopic))
-      : chatLines(W, msgs.filter((x) => x.from_name === selName || x.to_name === selName), (m) => dmTarget(m.to_id));
-    const maxUp = Math.max(0, all.length - h);
-    cscroll = Math.max(0, Math.min(cscroll, maxUp));
-    const end = all.length - cscroll, start = Math.max(0, end - h);
-    const slice = all.slice(start, end);
-    while (slice.length < h) slice.unshift("");
-    rows.push(...slice);
+    rows.push(...convPane(W, h, false));
   }
   while (rows.length < h) rows.push("");
   for (const r of rows.slice(0, h)) line(fit(r, W));
 
   const hint = preview ? "Enter send · Esc cancel" : view === "list" && section === "agents" ? "↑↓ select · Enter/Tab share with a teammate · ←/→ sections"
+    : section === "topics" && activeFilter().trim() ? `filter “${activeFilter().trim()}” · Esc clears · Enter opens`
+    : wideNow() ? (view === "list" ? "↑↓ select · Enter/click chat · ←/→ sections · drag │ or Ctrl+←/→ resize · /find · /help" : "type to reply · PgUp/PgDn scroll · ← or Esc list · drag │ or Ctrl+←/→ resize")
     : view === "list"
     ? "↑↓ select · Enter open · ←/→ people/discussions · Tab menu · /help"
     : "type to reply · wheel/PgUp scroll · Esc back · Tab menu";
@@ -257,7 +310,7 @@ async function poll(timer = false) {
       if (!firstPoll) lastActive = Date.now();
       msgs.push(decorateDM(m));
       if (m.from_name !== cfg.me) {
-        if (!(view === "chat" && selName === m.from_name)) unread[m.from_name] = (unread[m.from_name] || 0) + 1;
+        if (!(convVisible() && section === "people" && selName === m.from_name)) unread[m.from_name] = (unread[m.from_name] || 0) + 1;
         if (!firstPoll) {
           const mm = msgs[msgs.length - 1], ok = mark(mm, dmTarget(mm.to_id)).includes("✓");
           writeJson("last.json", { id: m.id, from_name: mm.from_name, body: mm.body, verified: ok }); bell();
@@ -273,7 +326,7 @@ async function poll(timer = false) {
       warnedKey = true; status = "⚠ this device's signing key differs from the registered one — ask an admin to reset it (messages will be rejected)";
     }
     const pj = JSON.stringify(pins); if (pj !== pinsSaved) { writeJson("pins.json", pins); pinsSaved = pj; }
-    if (view === "chat" && section === "topics") tunread[selTopic] = 0;
+    seen();
     firstPoll = false;
     if (status.startsWith("connection")) status = "";
   } catch (e) { status = "connection: " + e.message; }
@@ -314,7 +367,7 @@ async function pollTopics() {
       if (m.from_name !== cfg.me && !firstPoll) {
         const mm = list[list.length - 1];
         writeJson("last.json", { id: m.id, from_name: mm.from_name, body: mm.body, verified: mark(mm, topicTarget(t.id)).includes("✓") });
-        if (!(view === "chat" && section === "topics" && selTopic === t.id)) { tunread[t.id] = (tunread[t.id] || 0) + 1; bell(); }
+        if (!(convVisible() && section === "topics" && selTopic === t.id)) { tunread[t.id] = (tunread[t.id] || 0) + 1; bell(); }
       }
     }
   }
@@ -323,15 +376,16 @@ async function pollTopics() {
 function openChat(name) { section = "people"; selName = name; view = "chat"; cscroll = 0; unread[name] = 0; draw(); }
 function openTopic(id) { section = "topics"; selTopic = id; view = "chat"; cscroll = 0; tunread[id] = 0; draw(); }
 function moveTopic(d) {
-  if (!topics.length) return;
-  const i = Math.max(0, Math.min(topics.length - 1, topics.findIndex((t) => t.id === selTopic) + d));
-  selTopic = topics[i].id;
+  const vt = keepTopicSelection();
+  if (!vt.length) return;
+  const i = Math.max(0, Math.min(vt.length - 1, vt.findIndex((t) => t.id === selTopic) + d));
+  selTopic = vt[i].id; cscroll = 0; seen();
 }
 function move(d) {
   const ms = listRows().filter((r) => r.m).map((r) => r.m.name);
   if (!ms.length) return;
   const i = Math.max(0, Math.min(ms.length - 1, ms.indexOf(selName) + d));
-  selName = ms[i];
+  selName = ms[i]; cscroll = 0; seen();
 }
 function openMenu(x, y, target) {
   const items = [];
@@ -357,7 +411,7 @@ function openMenu(x, y, target) {
 // What /pull pastes: the latest incoming message of the conversation you have open (a person or a discussion);
 // from the list view, the latest message received anywhere.
 function pullSource() {
-  if (view === "chat") {
+  if (view === "chat") { // focus is on the conversation (list focus in the wide layout still means "latest anywhere")
     const incoming = section === "topics"
       ? (tmsgs[selTopic] || []).filter((m) => m.from_name !== cfg.me)
       : msgs.filter((m) => m.from_name === selName);
@@ -465,7 +519,7 @@ function helpMenu() {
     ["/to ", "/to <name> [msg]  message someone", 1], ["/task ", "/task <text>  set what you work on", 1],
     ["/rename ", "/rename <new>  change your name", 1], ["/title ", "/title <t>  change your title", 1], ["/dept ", "/dept <d>  change your department", 1],
     ["/topic ", "/topic <title>  new discussion", 1], ["/private ", "/private <title> | a, b  private topic", 1],
-    ["/at ", "/at <label>|off  tag your messages with where you work", 1], ["/mouse", "/mouse on|off  off lets you select and copy text", 0], ["/copy", "/copy  copy the last server install command", 0], ["/archive", "archive this discussion", 0], ["/fp", "safety numbers", 0], ["/pull", "paste last message into a pane", 0],
+    ["/at ", "/at <label>|off  tag your messages with where you work", 1], ["/find ", "/find <words>  filter discussions by title (Esc clears)", 1], ["/mouse", "/mouse on|off  off lets you select and copy text", 0], ["/copy", "/copy  copy the last server install command", 0], ["/archive", "archive this discussion", 0], ["/fp", "safety numbers", 0], ["/pull", "paste last message into a pane", 0],
     ...(isAdmin() ? [["/invite Name | Department | Title", "/invite  invite a person, or add | server for a Server Agent (admin)", 1], ["/remove ", "/remove <name>  (admin)", 1]] : []),
     ["/quit", "close", 0],
   ];
@@ -560,11 +614,17 @@ async function command(t) {
       const pk = name === cfg.me ? signer.pubkey : m.pubkey;
       flash(pk ? `${name}: ${fingerprint(pk)} — compare with them by voice` : `${name} has no signing key yet`, 15000);
     }
+    else if (t === "/find" || t.startsWith("/find ")) { // Discussions: filter the list by title; empty clears
+      filterQ = t.slice(5).trim();
+      if (section !== "topics") { section = "topics"; view = "list"; }
+      const vt = keepTopicSelection();
+      flash(filterQ ? `${vt.length} discussion(s) match “${filterQ}” · Esc clears the filter` : "filter cleared");
+    }
     else if (t === "/mouse" || t.startsWith("/mouse ")) { // mouse reporting makes the terminal hand clicks to us, which blocks text selection
       const v = t.slice(6).trim();
       if (v !== "on" && v !== "off") return flash(`mouse is ${cfg.mouse === false ? "off (you can select and copy text)" : "on (hold Shift, or Option on macOS, to select)"} · /mouse off | on`);
       cfg.mouse = v === "on"; saveConfig(cfg);
-      out(cfg.mouse ? E + "?1000h" + E + "?1006h" : E + "?1000l" + E + "?1006l");
+      out(cfg.mouse ? E + "?1000h" + E + "?1002h" + E + "?1006h" : E + "?1000l" + E + "?1002l" + E + "?1006l");
       flash(cfg.mouse ? "mouse on: clicks and menus work, hold Shift (Option on macOS) to select text" : "mouse off: select and copy with your terminal as usual (menus by keyboard)");
     }
     else if (t === "/copy") {
@@ -627,7 +687,7 @@ async function send(body) {
 
 // ---------- input ----------
 function quit() {
-  out(E + "?1000l" + E + "?1006l" + E + "?25h" + E + "?1049l");
+  out(E + "?1000l" + E + "?1002l" + E + "?1006l" + E + "?25h" + E + "?1049l");
   process.exit(0);
 }
 async function onKey(k) {
@@ -658,18 +718,22 @@ async function onKey(k) {
     return draw();
   }
   const SECTIONS = ["people", "topics", "agents"];
-  if ((k === "left" || k === "right") && view === "list" && !input) {
+  if (k === "split-" || k === "split+") { // Ctrl+←/→ resize the divider when the layout is side by side
+    if (wideNow()) { cfg.split = clampSplit(listWidth() + (k === "split+" ? 2 : -2), cols()); saveConfig(cfg); }
+  }
+  else if (k === "left" && wideNow() && view === "chat" && !input) view = "list";
+  else if ((k === "left" || k === "right") && view === "list" && !input) {
     section = SECTIONS[(SECTIONS.indexOf(section) + (k === "right" ? 1 : SECTIONS.length - 1)) % SECTIONS.length];
-    if (section === "agents") refreshAgents();
+    if (section === "agents") refreshAgents(); else { cscroll = 0; seen(); }
   }
   else if (k === "up") { if (view === "list") (section === "agents" ? moveAgent(-1) : section === "topics" ? moveTopic(-1) : move(-1)); else cscroll++; }
   else if (k === "down") { if (view === "list") (section === "agents" ? moveAgent(1) : section === "topics" ? moveTopic(1) : move(1)); else cscroll = Math.max(0, cscroll - 1); }
-  else if (k === "pgup") { if (view === "list") top -= 5; else cscroll += 5; }
-  else if (k === "pgdn") { if (view === "list") top += 5; else cscroll -= 5; }
-  else if (k === "esc") { if (input) input = ""; else view = "list"; }
+  else if (k === "pgup") { if (view === "list" && !wideNow()) top -= 5; else cscroll += 5; }
+  else if (k === "pgdn") { if (view === "list" && !wideNow()) top += 5; else cscroll -= 5; }
+  else if (k === "esc") { if (input) input = ""; else if (filterQ) { filterQ = ""; keepTopicSelection(); } else view = "list"; }
   else if (k === "enter") {
     const t = input.trim(); input = "";
-    if (!t) { if (view === "list") { if (section === "agents") agentMenu(4, 3); else if (section === "topics") { if (selTopic != null) openTopic(selTopic); } else if (selName) openChat(selName); } }
+    if (!t) { if (view === "list") { if (section === "agents") agentMenu(4, 3); else if (section === "topics") { const vt = keepTopicSelection(); if (selTopic != null && vt.length) openTopic(selTopic); } else if (selName) openChat(selName); } }
     else if (t.startsWith("/")) await command(t);
     else await send(t);
   }
@@ -679,6 +743,11 @@ async function onKey(k) {
   draw();
 }
 async function onMouse(b, x, y, press) {
+  // divider drag: button-event tracking reports motion (button 32) while the left button is down
+  if (dragging) {
+    if (!press) { dragging = false; saveConfig(cfg); return draw(); }
+    if (b === 32) { cfg.split = dragTo(x, cols()); return draw(); }
+  }
   if (!press) return;
   const H = process.stdout.rows || 24, h = Math.max(3, H - 4);
   if (menu) {
@@ -688,10 +757,24 @@ async function onMouse(b, x, y, press) {
     }
     menu = null; draw(); if (b !== 0 && b !== 2) return;
   }
-  if (b === 64) { if (view === "list") top -= 3; else cscroll += 3; return draw(); }
-  if (b === 65) { if (view === "list") top += 3; else cscroll = Math.max(0, cscroll - 3); return draw(); }
-  const inMain = y >= 2 && y < 2 + h;
+  const wide = wideNow(), L = listWidth(), inMain = y >= 2 && y < 2 + h;
+  const onList = !wide || x <= L; // in the side-by-side layout the left part is the list
+  if (b === 64 || b === 65) {
+    const up = b === 64;
+    if (wide ? !onList : view !== "list") cscroll = Math.max(0, cscroll + (up ? 3 : -3)); else top += up ? -3 : 3;
+    return draw();
+  }
   if (preview) return;
+  if (wide && inMain && b === 0 && onDivider(x, L)) { // grab the divider; a double click restores the default width
+    if (Date.now() - lastDivClick < 400) { delete cfg.split; saveConfig(cfg); lastDivClick = 0; return draw(); }
+    lastDivClick = Date.now(); dragging = true; return;
+  }
+  if (wide && inMain && !onList && x > L + 1) { // conversation side: focus it
+    if (b === 0) { view = "chat"; return draw(); }
+    if (b === 2) return openMenu(x, y, members.find((m) => m.name === selName));
+    return;
+  }
+  const listFocus = view === "list" || wide;
   if (section === "agents" && view === "list" && inMain) {
     const a = agentRows(agentGroups)[atop + (y - 2)]?.agent;
     if (a && (b === 0 || b === 2)) {
@@ -701,30 +784,39 @@ async function onMouse(b, x, y, press) {
     }
     return;
   }
-  if (section === "topics" && view === "list" && inMain) {
-    const t = topics[ttop + (y - 2)];
+  if (section === "topics" && listFocus && inMain) {
+    const t = visibleTopics()[ttop + (y - 2)];
     if (t && (b === 0 || b === 2)) {
       const dbl = selTopic === t.id && Date.now() - lastClick < 400; selTopic = t.id; lastClick = Date.now();
       if (b === 0 && dbl) return openTopic(t.id);
+      if (wide) { view = "list"; cscroll = 0; seen(); }
       if (b === 2) return openMenu(x, y, null);
       return draw();
     }
     return;
   }
-  const row = view === "list" && inMain ? listRows()[top + (y - 2)] : null;
-  if (b === 0 && row?.m) { if (selName === row.m.name && Date.now() - lastClick < 400) openChat(row.m.name); selName = row.m.name; lastClick = Date.now(); draw(); }
-  else if (b === 2 && inMain) { if (row?.m) selName = row.m.name; openMenu(x, y, row?.m || (view === "chat" ? members.find((m) => m.name === selName) : null)); }
+  const row = listFocus && inMain ? listRows()[top + (y - 2)] : null;
+  if (b === 0 && row?.m) {
+    if (selName === row.m.name && Date.now() - lastClick < 400) openChat(row.m.name);
+    selName = row.m.name; lastClick = Date.now();
+    if (wide) { view = "list"; cscroll = 0; seen(); }
+    draw();
+  }
+  else if (b === 2 && inMain) { if (row?.m) selName = row.m.name; openMenu(x, y, row?.m || (convVisible() ? members.find((m) => m.name === selName) : null)); }
 }
+let lastDivClick = 0;
 let lastClick = 0;
 
 process.stdin.setRawMode(true);
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", async (d) => {
-  const re = /\x1b\[<(\d+);(\d+);(\d+)([Mm])|\x1b\[A|\x1b\[B|\x1b\[5~|\x1b\[6~|\x1b\[[0-9;?]*[A-Za-z~]|\x1b|\t|\r|\n|\x7f|\x03|\x04|[^\x00-\x1f\x7f\x1b]+/g;
+  const re = /\x1b\[<(\d+);(\d+);(\d+)([Mm])|\x1b\[1;[35][CD]|\x1b\[A|\x1b\[B|\x1b\[5~|\x1b\[6~|\x1b\[[0-9;?]*[A-Za-z~]|\x1b|\t|\r|\n|\x7f|\x03|\x04|[^\x00-\x1f\x7f\x1b]+/g;
   let m;
   while ((m = re.exec(d))) {
     const s = m[0];
     if (m[1] !== undefined) await onMouse(+m[1], +m[2], +m[3], m[4] === "M");
+    else if (/^\x1b\[1;[35]C$/.test(s)) await onKey("split+");
+    else if (/^\x1b\[1;[35]D$/.test(s)) await onKey("split-");
     else if (s === "\x1b[A") await onKey("up");
     else if (s === "\x1b[B") await onKey("down");
     else if (s === "\x1b[C") await onKey("right");
@@ -741,10 +833,10 @@ process.stdin.on("data", async (d) => {
   }
 });
 process.stdout.on("resize", draw);
-process.on("exit", () => out(E + "?1000l" + E + "?1006l"));
+process.on("exit", () => out(E + "?1000l" + E + "?1002l" + E + "?1006l"));
 
 if (!cfg.id) { try { const me = await api(cfg, "GET", "/v1/me"); cfg.id = me.id; cfg.me = me.name; saveConfig(cfg); } catch {} }
-out(E + "?1049h" + (cfg.mouse === false ? "" : E + "?1000h" + E + "?1006h"));
+out(E + "?1049h" + (cfg.mouse === false ? "" : E + "?1000h" + E + "?1002h" + E + "?1006h"));
 // Adaptive polling: fast while you are active, slower when idle (keeps request volume low on free Worker plans).
 // Idle cap stays under the server's 30s presence-write throttle + 90s "online" window.
 let lastActive = Date.now();

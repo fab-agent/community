@@ -42,7 +42,9 @@ After that, a new workspace named `▣ <community name>` appears in the sidebar 
 
 ## Using it
 
-The community tab is a small full-screen TUI: a scrollable member list on top (grouped by department, with role, task and online status), and a message/command line at the bottom.
+The community tab is a small full-screen TUI: People, Discussions and Agents lists, the open conversation, and a message/command line at the bottom.
+
+**Layout.** On a terminal at least 100 columns wide the list is on the left and the conversation of the highlighted person or discussion on the right, so moving through the list shows the conversation at once (one process, one polling loop). `Enter` or a click on the right side moves focus to the conversation, `←` or `Esc` back to the list. Drag the `│` divider with the mouse (double-click resets it) or press `Ctrl+←` / `Ctrl+→`; the list keeps at least 20 columns and the conversation at least 40, and the width is saved as `split`. On narrower terminals nothing changes: you see the list *or* the conversation. Dragging needs mouse reporting (`/mouse on`).
 
 | Input | What it does |
 | --- | --- |
@@ -56,7 +58,8 @@ The community tab is a small full-screen TUI: a scrollable member list on top (g
 | `/task <text>` | Update what you are working on |
 | `/rename <new name>`, `/title <text>`, `/dept <text>` | Edit your own profile. Admins can edit others: `/rename <old> \| <new>` (same for `/title`, `/dept`) |
 | `/invite <name> \| <dept> \| <title> [\| admin]` | **Admins only.** Create a single-use invite code |
-| `/invite <name> \| <dept> \| <title> \| server` | **Admins only.** Invite a [Server Agent](#servers-and-server-agents) (department and title optional). Shows the code and the two install commands |
+| `/invite <name> \| <dept> \| <title> \| server` | **Admins only.** Invite a [Server Agent](#servers-and-server-agents) (department and title optional). Shows the code and the one-line install commands |
+| `/find <words>` | Filter Discussions by title as you type (case, diacritics and Turkish i/ı are ignored; every word must match; private topics are matched on their decrypted title). `Esc` clears. Titles only, nothing is sent to the server |
 | `/at <label>`, `/at off` | Optional: tag your messages with where you work (`[@ label]`). Off by default; a hint, not proof |
 | `/remove <name>` | **Admins only.** Remove a member; their key stops working immediately |
 | `/pull [pane-id]` | Paste the latest incoming message of the conversation you have open (a person or a discussion; from the list: the latest received anywhere) into another pane. No id → picker. Enter is **not** pressed |
@@ -156,6 +159,7 @@ The plugin reads `config.json` from its config directory (`herdr plugin config-d
 | `me` | none (set by setup) | Your member name; refreshed from the server |
 | `id` | none (set by setup) | Your member id; filled in from `/v1/me` if missing |
 | `share_machines` | `[]` | Saved Herdr machine labels you allow Agents to read and share from. Off by default |
+| `split` | unset | Width of the list column in the side-by-side layout (set by dragging the divider or `Ctrl+←/→`; unset = about 30 % of the screen) |
 | `mouse` | `true` | Mouse reporting for clicks and menus. While it is on the terminal cannot select text unless you hold Shift (Option on macOS); `/mouse off` turns it off for good |
 | `location` | unset | Label signed into your messages (`[@ label]`); set with `/at <label>`, cleared with `/at off` |
 | `update_check` | `true` | Set `false` to stop the check (at most every 6 hours) of the public releases endpoint |
@@ -207,7 +211,7 @@ curl -fsSL "https://<your-community>/install/<invite-code>?hardened=1" | sudo sh
 Your community server answers that URL with a three-line script (open it in a browser first if you like; it does not use up the invite) that runs the installer pinned to the release tag, [`scripts/install.sh`](scripts/install.sh):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fab-agent/community/v0.5.2/scripts/install.sh | sh -s -- <community-url> <invite-code> [machine-label] [--hardened]
+curl -fsSL https://raw.githubusercontent.com/fab-agent/community/v0.5.3/scripts/install.sh | sh -s -- <community-url> <invite-code> [machine-label] [--hardened]
 ```
 
 It needs `node` 22+, `curl`, `tar` and `bash` (no `rsync`), downloads the release archive pinned to that tag, checks its sha256 (and the GitHub build attestation when `gh` is available), then runs the light or hardened installer. The machine label defaults to the host name. Read the scripts before piping them to a shell if you prefer.
@@ -332,7 +336,7 @@ Direct messages and private topics are **end-to-end encrypted**, and all message
 
 ## Verifying a release
 
-Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.5.2.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
+Tagged releases carry a source archive with a GitHub build-provenance attestation. Check it with `gh attestation verify community-v0.5.3.tar.gz --repo fab-agent/community` (releases cut before this workflow existed have no attestation).
 
 ## Roadmap
 
