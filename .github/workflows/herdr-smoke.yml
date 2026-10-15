@@ -28,8 +28,9 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           herdr --version
           nohup herdr server > "$RUNNER_TEMP/herdr-server.log" 2>&1 &
-          for i in $(seq 1 30); do herdr status server >/dev/null 2>&1 && exit 0; sleep 1; done
-          cat "$RUNNER_TEMP/herdr-server.log"; exit 1
+          # `herdr status server` exits 0 even when nothing runs, so wait for a real socket API call to succeed
+          for i in $(seq 1 30); do herdr workspace list >/dev/null 2>&1 && exit 0; sleep 1; done
+          echo "server did not come up:"; cat "$RUNNER_TEMP/herdr-server.log"; exit 1
       - name: Link the plugin and list its actions
         run: |
           herdr plugin link "$GITHUB_WORKSPACE"
